@@ -2,7 +2,8 @@
   T-Display Suite  --  LilyGO T-Display-S3 (ESP32-S3, 1.9" 170x320 ST7789)
   ------------------------------------------------------------------------
   One firmware, several apps, picked from a menu on the device:
-    Big Clock, Weather Clock, XRP Ticker, Ham Shack Clock, LAN Sentinel, GXL Firewall
+    Big Clock, Weather Clock, XRP Ticker, Wi-Fi Meter, Wireless Sniffer,
+    Ham Shack Clock, LAN Sentinel, GXL Firewall
 
   Wi-Fi: tries the last network set up from a phone, then the home network in secrets.h
   (if there is one). If neither is in range it opens the "TDisplay-Setup" hotspot: join it
@@ -32,6 +33,8 @@
 #include "app_ham.h"
 #include "app_sentinel.h"
 #include "app_gxl.h"
+#include "app_sniffer.h"
+#include "app_wifimeter.h"
 #include "updater.h"
 
 #if __has_include("secrets.h")
@@ -64,6 +67,8 @@ App apps[] = {
   {"Big Clock",       "Just the time, huge",      bigclock::start, bigclock::run, bigclock::press},
   {"Weather Clock",   "Weather, sun, alerts",     weather::start,  weather::run,  weather::press},
   {"XRP Ticker",      "Price + history graph",    xrp::start,      xrp::run,      xrp::press},
+  {"Wi-Fi Meter",     "Signal + link details",    wifimeter::start, wifimeter::run, wifimeter::press},
+  {"Wireless Sniffer","Wi-Fi + Bluetooth nearby", sniffer::start,  sniffer::run,  sniffer::press},
   {"Ham Shack Clock", "UTC, solar, HF bands",     ham::start,      ham::run,      ham::press},
   {"LAN Sentinel",    "Ping hosts, Wi-Fi info",   sentinel::start, sentinel::run, sentinel::press},
   {"GXL Firewall",    "Firewall + cache Mbps",    gxl::start,      gxl::run,      gxl::press},
@@ -74,6 +79,12 @@ int current = 0;                // index of the running app
 Preferences prefs;
 WiFiManager wm;
 Button btnA = {BTN_A}, btnB = {BTN_B};
+
+// Every app starts in landscape; the ones that want portrait turn the screen in start().
+void startApp() {
+  setPortrait(false);
+  apps[current].start();
+}
 
 int appIndex(const String& name) {
   for (int i = 0; i < NUM_APPS; i++) if (name == apps[i].name) return i;
@@ -188,6 +199,7 @@ void showSetup() {
 
 // Opens the hotspot with the setup page. Restarts afterwards, so new settings take effect cleanly.
 void runPortal() {
+  setPortrait(false);
   pServer = new WiFiManagerParameter("server", "GXL Event Server (e.g. http://10.0.0.5:8000)", cfg.server.c_str(), 80);
   pKey    = new WiFiManagerParameter("key", "GXL agent key", cfg.key.c_str(), 64, "type='password'");
   pCall   = new WiFiManagerParameter("call", "Callsign (Ham Shack Clock)", cfg.callsign.c_str(), 12);
@@ -272,6 +284,7 @@ void drawMenu() {
 }
 
 void openMenu() {
+  setPortrait(false);
   inMenu = true;
   menuPick = current;
   menuSince = millis();
@@ -283,9 +296,9 @@ void menuPress(int pin) {
   if (pin == BTN_B) { menuPick = (menuPick + 1) % ITEMS; drawMenu(); return; }
   inMenu = false;
   if (menuPick == NUM_APPS + 1) { runPortal(); return; }
-  if (menuPick == NUM_APPS) { updater::check(true); apps[current].start(); return; }
+  if (menuPick == NUM_APPS) { updater::check(true); startApp(); return; }
   if (menuPick != current) { current = menuPick; saveApp(); }
-  apps[current].start();
+  startApp();
 }
 
 // ---------- Main ----------
@@ -307,7 +320,7 @@ void setup() {
   configTzTime(cfg.tz.c_str(), "pool.ntp.org", "time.nist.gov");
 
   if (cfg.autoUpdate) { splash("Checking for updates"); updater::check(false); }
-  apps[current].start();
+  startApp();
 }
 
 void loop() {
@@ -316,14 +329,14 @@ void loop() {
   if (inMenu) {
     if (a == SHORT) menuPress(BTN_A);
     if (b == SHORT) menuPress(BTN_B);
-    if (inMenu && millis() - menuSince > MENU_IDLE_MS) { inMenu = false; apps[current].start(); }
+    if (inMenu && millis() - menuSince > MENU_IDLE_MS) { inMenu = false; startApp(); }
   } else {
     if (a == LONG)  { openMenu(); return; }
     if (b == LONG)  { runPortal(); return; }
     if (a == SHORT) apps[current].press(BTN_A);
     if (b == SHORT) apps[current].press(BTN_B);
     apps[current].run();
-    updater::tick();
+    if (updater::tick()) startApp();      // a failed update drew over the app
   }
 
   // Wi-Fi watchdog: a long outage usually means the device was moved, so restart and run
