@@ -7,7 +7,7 @@
 
 namespace bigclock {
 
-const uint16_t COLORS[] = {0xFFFF, 0xF800, 0xFD20, 0x07E0, 0x07FF, 0x5DDF};  // white red amber green cyan blue
+const uint16_t COLORS[] = {0xFFFF, 0xF800, 0xFD20, 0x07E0, 0x07FF, 0x5DDF, 0x001F};  // white red amber green cyan blue dark-blue
 const int      NUM_COLORS = sizeof(COLORS) / sizeof(COLORS[0]);
 const uint8_t  DIGITS[] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};  // bits: a b c d e f g
 
