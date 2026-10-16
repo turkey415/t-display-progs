@@ -12,7 +12,7 @@ const int      NUM_COLORS = sizeof(COLORS) / sizeof(COLORS[0]);
 const uint8_t  DIGITS[] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};  // bits: a b c d e f g
 
 // Digit size: two pairs of 66 px digits around a colon, 146 px tall.
-const int W = 66, H = 146, T = 15, GAP = 2, TOP = 8;
+const int W = 66, H = 146, T = 17, GAP = 2, TOP = 8;   // T: segment thickness, was 15
 const int X[4] = {8, 82, 172, 246};
 
 int colorIx = 0;
