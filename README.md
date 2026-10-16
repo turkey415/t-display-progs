@@ -8,7 +8,9 @@ Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen).
 
 | App | What it shows |
 | --- | --- |
-| **Weather Clock** | Local time, current conditions, 5-day forecast. Finds its location from your public IP, so it follows the device around (ip-api.com + Open-Meteo, no API keys). |
+| **Big Clock** | Just the time: 24-hour HH:MM in seven-segment digits nearly the full height of the screen, with a thin seconds bar. Top key changes colour, bottom key the brightness. |
+| **Weather Clock** | Local time and current conditions, 5-day forecast, sunrise/sunset and moon phase, and **weather alerts** from the National Weather Service. While an alert is active the header takes turns showing it, and a warning flashes a red border. Finds its location from your public IP, so it follows the device around (ip-api.com, Open-Meteo, weather.gov; no API keys). |
+| **XRP Ticker** | XRP's price in dollars, the 24-hour change, high, low and volume, and a price graph over 1 day, 1 week, 1 month or 3 months (top key changes it). Free Coinbase data, no key. |
 | **Ham Shack Clock** | Big UTC clock, local time, SFI / SSN / A / K, HF band conditions day and night (hamqsl.com). |
 | **LAN Sentinel** | Pings up to 6 hosts in turn and shows up/down and latency, plus a Wi-Fi details page. |
 | **GXL Firewall** | The firewall's (pink in / yellow out) and LAN cache's traffic from a [GXL-LANapp](https://github.com/turkey415/GXL-LANapp) Event Server, with a half-hour trace, like the Ops Console banner. |
@@ -27,7 +29,8 @@ Settings on that page:
 - **GXL Event Server**: e.g. `http://10.0.0.5:8000`, and the event's **agent key** (the one the PC agents use). Needed for GXL Firewall.
 - **Callsign** and **local time zone** (POSIX, e.g. `CST6CDT,M3.2.0,M11.1.0`) for the Ham Shack Clock.
 - **LAN Sentinel hosts**: `Label=target,Label=target`, up to 6. A target is an IP, a hostname, or `GW` for the gateway. Empty means gateway, 1.1.1.1, 8.8.8.8 and google.com.
-- **Units** F or C, **clock** 24 or 12.
+- **Units** F or C, **clock** 24 or 12 (for the Weather and Ham clocks; the Big Clock is always 24-hour).
+- **Install updates by itself**: yes or no (see below).
 
 If Wi-Fi is lost for 2 minutes the device restarts and goes through the steps again, so moving it somewhere new just works.
 
@@ -40,8 +43,26 @@ The top key is GPIO14, the bottom one is BOOT (GPIO0).
 | Hold bottom | Open the app menu: top moves down, bottom picks. The app picked starts at every power-on. |
 | Hold top | Open the Wi-Fi & settings hotspot |
 | Hold top while powering on | Same, before trying any network |
-| Press top | Next page (Weather, Ham, Sentinel) or firewall ↔ LAN cache (GXL) |
-| Press bottom | Refresh now |
+| Press top | Next page (Weather, Ham, Sentinel), next graph range (XRP), firewall ↔ LAN cache (GXL), next colour (Big Clock) |
+| Press bottom | Refresh now (Big Clock: brightness, which every app keeps) |
+
+The menu also has **Check for update** and **Wi-Fi & settings**.
+
+## Updates over Wi-Fi
+
+Devices update themselves from this repo's [releases](https://github.com/turkey415/t-display-progs/releases). At power-on and once a day each one reads `version.txt` from the latest release and, if it is newer than what it runs, downloads `TDisplay_Suite.bin`, installs it and restarts. You see a progress bar while it does. Settings and Wi-Fi are kept. **Check for update** in the menu does the same at any time. Turn the automatic check off on the setup page if you'd rather update by hand.
+
+To publish a new version:
+
+1. Change `FW_VERSION` in `TDisplay_Suite/version.h` (e.g. `1.2.0`) and merge.
+2. Push the tag on main: `git tag v1.2.0 && git push origin v1.2.0`.
+3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
+
+Every pull request gets a build too, with the files attached to the run.
+
+A .bin can also be uploaded by hand from the setup hotspot's **Update** page, and `TDisplay_Suite-full.bin` is for a first flash over USB (write it at offset 0x0 with esptool or a web flasher).
+
+The download uses HTTPS but does not check GitHub's certificate. The device checks that the file is a whole, valid ESP32 firmware image before switching to it, but not who built it, so someone able to tamper with your network could in principle give it other firmware. That's a fair trade for a desk display; say so if you want signed updates.
 
 ### GXL Firewall
 
@@ -49,7 +70,7 @@ It reads `GET /agent/gear` on the Event Server with the event's agent key, every
 
 ### Build defaults (optional)
 
-Copy `TDisplay_Suite/secrets.h.example` to `TDisplay_Suite/secrets.h` to build in your home Wi-Fi, GXL server, agent key, callsign and the first app. `secrets.h` is in `.gitignore`. Anything set from the phone takes over from it.
+Copy `TDisplay_Suite/secrets.h.example` to `TDisplay_Suite/secrets.h` to build in your home Wi-Fi, GXL server, agent key, callsign and the first app. `secrets.h` is in `.gitignore`. On first boot these are saved to the device, so the releases from GitHub (built without your `secrets.h`) keep them. Anything set from the phone takes over.
 
 ## Standalone sketches
 
@@ -59,9 +80,9 @@ Copy `TDisplay_Suite/secrets.h.example` to `TDisplay_Suite/secrets.h` to build i
 
 With [arduino-cli](https://arduino.github.io/arduino-cli/), ESP32 core 3.x and these libraries:
 
-- **TFT_eSPI**, with `User_Setup_Select.h` edited to include `Setup206_LilyGo_T_Display_S3.h` (and nothing else)
-- **ArduinoJson** 7
-- **WiFiManager** (tzapu)
+- **TFT_eSPI** 2.5.43, with `User_Setup_Select.h` edited to include `Setup206_LilyGo_T_Display_S3.h` (and nothing else)
+- **ArduinoJson** 7.4
+- **WiFiManager** 2.0.17 (tzapu)
 - **ESP32Ping** (marian-craciunescu)
 
 ```sh

@@ -1,6 +1,10 @@
 // Weather Clock
 //   Page 1: local time, current conditions, feels-like / humidity / wind / hi-lo
 //   Page 2: 5-day forecast
+//   Page 3: sunrise / sunset with the sun's place on its arc, and the moon's phase
+//   Page 4: weather alerts from the US National Weather Service (weather.gov), every 5 min.
+//           While one is active the header takes turns showing it, and a warning
+//           (severe or extreme) flashes a red border round every page.
 // Location is looked up from the public IP (ip-api.com) at start, every hour and after Wi-Fi
 // comes back, so it follows the device around. Weather and the local time zone come from
 // Open-Meteo (no API key), every 15 min, so DST and travel across zones are automatic.
@@ -21,6 +25,9 @@ const uint32_t WX_EVERY_MS  = 15UL * 60UL * 1000UL;
 const uint32_t WX_RETRY_MS  = 60UL * 1000UL;
 const uint32_t LOC_RETRY_MS = 60UL * 1000UL;
 const uint32_t LOC_EVERY_MS = 60UL * 60UL * 1000UL;
+const uint32_t ALERT_EVERY_MS = 5UL * 60UL * 1000UL;
+const int      NUM_PAGES    = 4;
+const int      MAX_ALERTS   = 6;
 
 #define C_SUN    0xFE60
 #define C_CLOUD  0xBDF7
@@ -43,12 +50,30 @@ struct Weather {
   int      days;
   int      dCode[5], dPop[5], dWday[5];
   float    dHi[5], dLo[5];
+  int      dRise[5], dSet[5];   // minutes after local midnight, -1 if none
+  int      dDay[5];             // seconds of daylight
   bool     fahrenheit;   // the units it was fetched in
 } wx;
 
+// Active alerts, one row per kind of alert (three Flood Warnings are one row, count 3).
+struct Alert {
+  String event, severity;
+  String until;      // "Sun 09:40", local to the alert
+  String endIso;     // for keeping the latest end of several
+  int    rank;       // 4 extreme, 3 severe, 2 moderate, 1 minor, 0 unknown
+  int    count;
+};
+struct Alerts {
+  bool     checked;     // asked weather.gov at least once since the location was found
+  bool     available;   // weather.gov answers for this place (US only)
+  int      n;
+  Alert    a[MAX_ALERTS];
+  uint32_t fetchedAt;
+} alerts;
+
 int      page = 0;
 String   status = "Finding location";
-uint32_t lastLoc = 0, lastTry = 0, seenEpoch = 0;
+uint32_t lastLoc = 0, lastTry = 0, seenEpoch = 0, lastAlertTry = 0;
 bool     locDue = true;
 
 const char* WDAY[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -75,6 +100,38 @@ const char* wxText(int c) {
   if (c >= 95)              return "Thunderstorm";
   return "--";
 }
+
+// "2026-10-15T07:21" (or with seconds and offset) -> 441 minutes after midnight; -1 if not a time.
+int minutesOf(const char* iso) {
+  int h, m;
+  const char* t = strchr(iso, 'T');
+  if (!t || sscanf(t + 1, "%d:%d", &h, &m) != 2) return -1;
+  return h * 60 + m;
+}
+
+String hhmm(int minutes) {
+  if (minutes < 0) return "--";
+  int h = minutes / 60, m = minutes % 60;
+  char buf[12];
+  if (cfg.clock24) snprintf(buf, sizeof buf, "%02d:%02d", h, m);
+  else snprintf(buf, sizeof buf, "%d:%02d%s", h % 12 ? h % 12 : 12, m, h < 12 ? "a" : "p");
+  return buf;
+}
+
+int severityRank(const String& s) {
+  if (s == "Extreme")  return 4;
+  if (s == "Severe")   return 3;
+  if (s == "Moderate") return 2;
+  if (s == "Minor")    return 1;
+  return 0;
+}
+
+uint16_t severityColor(int rank) {
+  static const uint16_t c[] = {C_DIM, C_WARN, C_SLOW, C_BAD, 0xF81F};
+  return c[constrain(rank, 0, 4)];
+}
+
+bool haveLocalTime(struct tm& out);
 
 // ---------- Network ----------
 bool getLocation() {
@@ -111,7 +168,7 @@ bool fetchWeather() {
                "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
                "weather_code,wind_speed_10m,is_day"
                "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
-               "precipitation_probability_max"
+               "precipitation_probability_max,sunrise,sunset,daylight_duration"
                "&timezone=auto&forecast_days=5";
   if (cfg.fahrenheit) url += "&temperature_unit=fahrenheit&wind_speed_unit=mph";
 
@@ -148,11 +205,79 @@ bool fetchWeather() {
     wx.dHi[i]   = d["temperature_2m_max"][i] | 0.0f;
     wx.dLo[i]   = d["temperature_2m_min"][i] | 0.0f;
     wx.dPop[i]  = d["precipitation_probability_max"][i] | -1;
+    wx.dRise[i] = minutesOf(d["sunrise"][i] | "");
+    wx.dSet[i]  = minutesOf(d["sunset"][i] | "");
+    wx.dDay[i]  = (int)(d["daylight_duration"][i] | 0.0f);
   }
   wx.ok = true;
   wx.fahrenheit = cfg.fahrenheit;
   wx.fetchedAt = millis();
   Serial.printf("weather %.1f, code %d, offset %d\n", wx.temp, wx.code, wx.utcOffset);
+  return true;
+}
+
+// Active alerts for this spot from weather.gov. Only the few fields shown are kept, so a long
+// alert text does not have to fit in memory.
+bool fetchAlerts() {
+  if (!wifiUp() || !loc.ok) return false;
+  String url = "https://api.weather.gov/alerts/active?point=" + String(loc.lat, 3) + "," + String(loc.lon, 3);
+  WiFiClientSecure client;
+  client.setInsecure();                 // public, read-only data
+  HTTPClient http;
+  http.useHTTP10(true);                 // no chunked reply, so the JSON can be read as it arrives
+  http.setTimeout(10000);
+  if (!http.begin(client, url)) return false;
+  http.setUserAgent("TDisplaySuite (github.com/turkey415/t-display-progs)");   // weather.gov asks for one
+  http.addHeader("Accept", "application/geo+json");
+  int code = http.GET();
+  alerts.checked = true;
+  if (code != 200) {
+    Serial.printf("alerts HTTP %d\n", code);
+    http.end();
+    if (code >= 400 && code < 500) { alerts.available = false; alerts.n = 0; }   // outside the US
+    return false;
+  }
+  JsonDocument filter;
+  JsonObject f = filter["features"][0]["properties"].to<JsonObject>();
+  f["event"] = true; f["severity"] = true; f["ends"] = true; f["expires"] = true;
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  if (err) { Serial.printf("alerts parse: %s\n", err.c_str()); return false; }
+
+  alerts.available = true;
+  alerts.n = 0;
+  struct tm today;
+  bool haveToday = haveLocalTime(today);
+  for (JsonObject feat : doc["features"].as<JsonArray>()) {
+    JsonObject p = feat["properties"];
+    String event = p["event"] | "Alert";
+    String sev   = p["severity"] | "Unknown";
+    const char* end = p["ends"].isNull() ? (p["expires"] | "") : (p["ends"] | "");
+
+    String until = "";
+    int y, mo, d;
+    if (sscanf(end, "%d-%d-%d", &y, &mo, &d) == 3) {
+      until = hhmm(minutesOf(end));
+      if (!haveToday || d != today.tm_mday) until = String(WDAY[weekday(y, mo, d)]) + " " + until;
+    }
+
+    int i = 0;
+    while (i < alerts.n && alerts.a[i].event != event) i++;
+    if (i < alerts.n) {                 // another of the same kind: count it, keep the latest end
+      alerts.a[i].count++;
+      if (String(end) > alerts.a[i].endIso) { alerts.a[i].until = until; alerts.a[i].endIso = end; }
+      continue;
+    }
+    Alert al = {event, sev, until, String(end), severityRank(sev), 1};
+    if (alerts.n < MAX_ALERTS) alerts.a[alerts.n++] = al;
+    else if (al.rank > alerts.a[MAX_ALERTS - 1].rank) alerts.a[MAX_ALERTS - 1] = al;
+    for (int j = alerts.n - 1; j > 0 && alerts.a[j].rank > alerts.a[j - 1].rank; j--) {   // worst first
+      Alert t = alerts.a[j]; alerts.a[j] = alerts.a[j - 1]; alerts.a[j - 1] = t;
+    }
+  }
+  alerts.fetchedAt = millis();
+  Serial.printf("alerts: %d kind(s)\n", alerts.n);
   return true;
 }
 
@@ -252,8 +377,35 @@ bool haveLocalTime(struct tm& out) {
   return true;
 }
 
+// The page's own header, except that while an alert is active it takes turns (3 s each) with
+// a banner in the alert's colour.
+void wxHeader(const String& left, const String& right, uint16_t rightCol = C_DIM) {
+  if (alerts.n && (millis() / 3000) % 2) {
+    const Alert& a = alerts.a[0];
+    uint16_t c = severityColor(a.rank);
+    spr.fillRect(0, 0, 320, 20, c);
+    spr.setTextFont(2);
+    spr.setTextColor(C_BG, c);
+    spr.setTextDatum(TL_DATUM);
+    String ev = a.event;
+    ev.toUpperCase();
+    spr.drawString(ev + (a.count > 1 ? " x" + String(a.count) : ""), 6, 2);
+    spr.setTextDatum(TR_DATUM);
+    spr.drawString(alerts.n > 1 ? "+" + String(alerts.n - 1) + " more" : a.until.length() ? "until " + a.until : "", 314, 2);
+    return;
+  }
+  header(left, right, C_ACC, rightCol);
+}
+
+// A warning flashes a red border round the screen, once a second.
+void alertBorder() {
+  if (!alerts.n || alerts.a[0].rank < 3 || millis() % 1000 > 500) return;
+  uint16_t c = severityColor(alerts.a[0].rank);
+  for (int i = 0; i < 3; i++) spr.drawRect(i, i, 320 - 2 * i, 170 - 2 * i, c);
+}
+
 void drawWaiting() {
-  header("WEATHER CLOCK", wifiUp() ? "" : "Wi-Fi DOWN", C_ACC, C_BAD);
+  wxHeader("WEATHER CLOCK", wifiUp() ? "" : "Wi-Fi DOWN", C_BAD);
   centered(status, 90);
 }
 
@@ -264,9 +416,9 @@ void drawNow() {
   char buf[32];
   if (wifiUp()) {
     snprintf(buf, sizeof buf, "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MON[t.tm_mon]);
-    header(loc.name, buf);
+    wxHeader(loc.name, buf);
   } else {
-    header(loc.name, "Wi-Fi DOWN", C_ACC, C_BAD);
+    wxHeader(loc.name, "Wi-Fi DOWN", C_BAD);
   }
 
   int hr = t.tm_hour;
@@ -304,7 +456,7 @@ void drawNow() {
 
 void drawForecast() {
   if (!wx.ok) { drawWaiting(); return; }
-  header("5-DAY FORECAST", loc.name);
+  wxHeader("5-DAY FORECAST", loc.name);
 
   for (int i = 0; i < wx.days; i++) {
     int cx = 32 + i * 64;
@@ -329,9 +481,143 @@ void drawForecast() {
   }
 }
 
+// ---------- Sun & moon ----------
+const double SYNODIC = 29.530588853;              // days from new moon to new moon
+
+double moonAge(time_t now) {                      // days since the last new moon
+  double days = (now - 947182440.0) / 86400.0;    // a new moon: 2000-01-06 18:14 UTC
+  double age = fmod(days, SYNODIC);
+  return age < 0 ? age + SYNODIC : age;
+}
+
+const char* moonName(double age) {
+  static const char* names[] = {"New moon", "Waxing crescent", "First quarter", "Waxing gibbous",
+                                "Full moon", "Waning gibbous", "Last quarter", "Waning crescent"};
+  return names[(int)floor(age / SYNODIC * 8 + 0.5) % 8];
+}
+
+// The moon as seen from the north: lit from the right while waxing, from the left while waning.
+void drawMoon(int cx, int cy, int r, double age) {
+  double k = cos(2 * PI * age / SYNODIC);         // 1 at new moon, -1 at full
+  bool waxing = age < SYNODIC / 2;
+  spr.fillCircle(cx, cy, r, 0x2124);
+  for (int dy = -r; dy <= r; dy++) {
+    float w = sqrtf(r * r - dy * dy);
+    int x0 = waxing ? lroundf(w * k) : lroundf(-w);
+    int x1 = waxing ? lroundf(w) : lroundf(-w * k);
+    if (x1 > x0) spr.drawFastHLine(cx + x0, cy + dy, x1 - x0 + 1, 0xE71C);
+  }
+  spr.drawCircle(cx, cy, r, C_DIM);
+}
+
+String hm(int secs) { return String(secs / 3600) + "h " + String((secs % 3600) / 60) + "m"; }
+
+void drawSky() {
+  struct tm t;
+  if (!haveLocalTime(t)) { drawWaiting(); return; }
+  char buf[24];
+  snprintf(buf, sizeof buf, "%s %d %s", WDAY[t.tm_wday], t.tm_mday, MON[t.tm_mon]);
+  wxHeader("SUN & MOON", buf);
+
+  // The sun's arc from sunrise (left) to sunset (right), and where it is now.
+  const int cx = 80, cy = 112, r = 62;
+  int rise = wx.dRise[0], set = wx.dSet[0], now = t.tm_hour * 60 + t.tm_min;
+  for (int a = 0; a <= 180; a += 6) {
+    float rad = a * PI / 180;
+    spr.fillCircle(cx - r * cosf(rad), cy - r * sinf(rad), 1, 0x4208);
+  }
+  spr.drawFastHLine(8, cy, 144, C_DIM);
+  if (rise >= 0 && set > rise && now >= rise && now <= set) {
+    float f = (float)(now - rise) / (set - rise);
+    int sx = cx - r * cosf(PI * f), sy = cy - r * sinf(PI * f);
+    spr.fillCircle(sx, sy, 9, C_SUN);
+    spr.drawCircle(sx, sy, 12, C_SUN);
+  } else {
+    spr.setTextFont(2);
+    spr.setTextDatum(MC_DATUM);
+    spr.setTextColor(C_DIM, C_BG);
+    spr.drawString(now < rise ? "before sunrise" : "after sunset", cx, cy - 26);
+  }
+
+  spr.setTextFont(4);
+  spr.setTextColor(C_SUN, C_BG);
+  spr.setTextDatum(TL_DATUM);
+  spr.drawString(hhmm(rise), 6, cy + 6);
+  spr.setTextDatum(TR_DATUM);
+  spr.drawString(hhmm(set), 156, cy + 6);
+  spr.setTextFont(2);
+  spr.setTextColor(C_DIM, C_BG);
+  spr.setTextDatum(TL_DATUM);
+  spr.drawString("Day " + hm(wx.dDay[0]), 6, 150);
+  if (wx.days > 1 && wx.dDay[1] && wx.dDay[0]) {
+    int diff = (wx.dDay[1] - wx.dDay[0]) / 60;
+    spr.setTextDatum(TR_DATUM);
+    spr.drawString(String(diff >= 0 ? "+" : "") + String(diff) + "m tmrw", 156, 150);
+  }
+  spr.drawFastVLine(164, 26, 138, C_HDR);
+
+  // The moon.
+  double age = moonAge(time(nullptr));
+  drawMoon(242, 64, 34, age);
+  int lit = lroundf((1 - cos(2 * PI * age / SYNODIC)) / 2 * 100);
+  spr.setTextDatum(TC_DATUM);
+  spr.setTextFont(2);
+  spr.setTextColor(C_TEXT, C_BG);
+  spr.drawString(moonName(age), 242, 104);
+  spr.setTextColor(C_DIM, C_BG);
+  spr.drawString(String(lit) + "% lit", 242, 122);
+  double toFull = fmod(SYNODIC / 2 - age + SYNODIC, SYNODIC), toNew = SYNODIC - age;
+  bool fullNext = toFull < toNew;
+  int days = lround(fullNext ? toFull : toNew);
+  spr.drawString(String(fullNext ? "Full" : "New") + (days ? " in " + String(days) + (days == 1 ? " day" : " days") : " today"), 242, 140);
+}
+
+// ---------- Alerts page ----------
+void drawAlerts() {
+  wxHeader("WEATHER ALERTS", loc.name);
+  if (!alerts.checked) { centered("Checking weather.gov", 90); return; }
+  if (!alerts.available) {
+    centered("No alerts here", 76, 4);
+    centered("weather.gov covers the US only", 108, 2);
+    return;
+  }
+  if (!alerts.n) {
+    centered("No active alerts", 76, 4, C_GOOD);
+    centered("National Weather Service, checked every 5 min", 108, 2);
+    return;
+  }
+  int rows = min(alerts.n, 4);
+  for (int i = 0; i < rows; i++) {
+    const Alert& a = alerts.a[i];
+    int y = 24 + i * 34;
+    uint16_t c = severityColor(a.rank);
+    spr.fillRoundRect(4, y + 2, 6, 28, 2, c);
+    spr.setTextDatum(TL_DATUM);
+    spr.setTextFont(4);
+    spr.setTextColor(c, C_BG);
+    String ev = a.event + (a.count > 1 ? " x" + String(a.count) : "");
+    if (spr.textWidth(ev, 4) > 300) spr.setTextFont(2);
+    spr.drawString(ev, 16, y + 1);
+    spr.setTextFont(1);
+    spr.setTextColor(C_DIM, C_BG);
+    spr.drawString(a.severity + (a.until.length() ? "  -  until " + a.until : ""), 16, y + 24);
+  }
+  if (alerts.n > rows) {
+    spr.setTextDatum(BR_DATUM);
+    spr.setTextFont(1);
+    spr.drawString("+" + String(alerts.n - rows) + " more", 314, 168);
+  }
+}
+
 void render() {
   spr.fillSprite(C_BG);
-  if (page == 0) drawNow(); else drawForecast();
+  switch (page) {
+    case 0: drawNow(); break;
+    case 1: drawForecast(); break;
+    case 2: drawSky(); break;
+    default: drawAlerts(); break;
+  }
+  alertBorder();
   spr.pushSprite(0, 0);
 }
 
@@ -355,10 +641,19 @@ void run() {
     if (getLocation()) {
       status = "Getting weather";
       render();
+      if (loc.name != before) alerts.checked = false;
       if (!wx.ok || loc.name != before) { lastTry = millis(); if (!fetchWeather()) status = "Weather failed, retrying"; }
     } else {
       status = "Location failed, retrying";
     }
+    render();
+  }
+
+  if (up && loc.ok && (!alerts.checked || millis() - lastAlertTry > ALERT_EVERY_MS)) {
+    lastAlertTry = millis();
+    int before = alerts.n ? alerts.a[0].rank : -1;
+    fetchAlerts();
+    if (alerts.n && alerts.a[0].rank >= 3 && alerts.a[0].rank > before) page = 3;   // a new warning: show it
     render();
   }
 
@@ -368,14 +663,13 @@ void run() {
     if (!fetchWeather() && !wx.ok) status = "Weather failed, retrying";
   }
 
-  static time_t lastSec = 0;
-  time_t now = time(nullptr);
-  if (now != lastSec) { lastSec = now; render(); }
+  static uint32_t lastDraw = 0;         // 4 times a second, for the flashing border
+  if (millis() - lastDraw > 250) { lastDraw = millis(); render(); }
 }
 
 void press(int pin) {
-  if (pin == BTN_B) page ^= 1;
-  else              fetchWeather();
+  if (pin == BTN_B) page = (page + 1) % NUM_PAGES;
+  else { fetchWeather(); fetchAlerts(); }
   render();
 }
 

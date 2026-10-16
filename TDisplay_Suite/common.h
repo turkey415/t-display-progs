@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <TFT_eSPI.h>
 #include <time.h>
+#include <Preferences.h>
 
 // ---------- Board pins ----------
 #define PIN_POWER_ON 15   // LCD + battery power enable (must be HIGH on battery)
@@ -35,8 +36,29 @@ struct Settings {
   String hosts;       // LAN Sentinel: "Label=target,Label=target"; target "GW" = the gateway
   bool   fahrenheit;
   bool   clock24;
-  int    app;         // which app runs at power-on
+  bool   autoUpdate;  // install new releases from GitHub by itself
+  int    bright;      // backlight step, 0 = brightest
+  String app;         // the app that runs at power-on, by name
 } cfg;
+
+// ---------- Backlight ----------
+const uint8_t BRIGHT[] = {255, 150, 80, 35, 10};
+const int     NUM_BRIGHT = sizeof(BRIGHT);
+
+void applyBrightness() {
+  static bool attached = false;
+  if (!attached) { ledcAttach(PIN_LCD_BL, 5000, 8); attached = true; }
+  ledcWrite(PIN_LCD_BL, BRIGHT[constrain(cfg.bright, 0, NUM_BRIGHT - 1)]);
+}
+
+void stepBrightness() {
+  cfg.bright = (cfg.bright + 1) % NUM_BRIGHT;
+  applyBrightness();
+  Preferences p;
+  p.begin("suite", false);
+  p.putInt("bright", cfg.bright);
+  p.end();
+}
 
 // Bumped each time Wi-Fi comes back after a drop, so apps can re-check things.
 uint32_t wifiEpoch = 0;
