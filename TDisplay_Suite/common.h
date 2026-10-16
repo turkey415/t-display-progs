@@ -92,7 +92,7 @@ Press poll(Button& b) {
 // Every app is landscape (320x170, USB on the left) except the ones that ask for portrait
 // (170x320, USB at the bottom). The menu, setup and update screens are always landscape.
 const int ROT_LANDSCAPE = 1;
-const int ROT_PORTRAIT  = 2;    // 0 would put the USB at the top
+const int ROT_PORTRAIT  = 0;    // USB at the bottom (2 puts it at the top)
 bool portrait = false;
 
 void setPortrait(bool p) {
