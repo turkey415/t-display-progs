@@ -15,6 +15,7 @@ const char* RELEASES = "https://github.com/turkey415/t-display-progs/releases/la
 const uint32_t EVERY_MS = 24UL * 60UL * 60UL * 1000UL;
 
 uint32_t lastCheck = 0;
+bool     drew = false;       // screen() was called
 
 // "1.10.2" > "1.9.9": compared number by number.
 bool newer(const String& a, const String& b) {
@@ -26,6 +27,8 @@ bool newer(const String& a, const String& b) {
 }
 
 void screen(const String& title, const String& line1, const String& line2 = "", uint16_t col = C_DIM) {
+  setPortrait(false);
+  drew = true;
   spr.fillSprite(C_BG);
   header("SOFTWARE UPDATE", "v" FW_VERSION);
   centered(title, 60, 4, C_TEXT);
@@ -86,9 +89,12 @@ void check(bool shown) {
   delay(4000);
 }
 
-// From loop(): the daily check.
-void tick() {
-  if (cfg.autoUpdate && wifiUp() && millis() - lastCheck > EVERY_MS) check(false);
+// From loop(): the daily check. True if it put something on the screen (a failed update).
+bool tick() {
+  if (!cfg.autoUpdate || !wifiUp() || millis() - lastCheck < EVERY_MS) return false;
+  drew = false;
+  check(false);
+  return drew;                            // only when an update was tried and failed
 }
 
 }  // namespace updater

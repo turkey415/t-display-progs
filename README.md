@@ -11,6 +11,8 @@ Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen).
 | **Big Clock** | Just the time: 24-hour HH:MM in seven-segment digits nearly the full height of the screen, with a thin seconds bar. Top key changes colour, bottom key the brightness. |
 | **Weather Clock** | Local time and current conditions, 5-day forecast, sunrise/sunset and moon phase, and **weather alerts** from the National Weather Service. While an alert is active the header takes turns showing it, and a warning flashes a red border. Finds its location from your public IP, so it follows the device around (ip-api.com, Open-Meteo, weather.gov; no API keys). |
 | **XRP Ticker** | XRP's price in dollars, the 24-hour change, high, low and volume, and a price graph over 1 day, 1 week, 1 month or 3 months (top key changes it). Free Coinbase data, no key. |
+| **Wi-Fi Meter** | The Wi-Fi it's on, mainly how strong: a needle gauge, dBm, quality, min/max/average and the last few minutes. The top key steps through **Link** (access point, channel and width, 802.11 modes, security and cipher, country, TX power, how long connected), **Network** (IP, mask, gateway, DNS, MAC, hostname, public IP and ISP), **Ping** (latency and loss to the gateway, the DNS server and 1.1.1.1) and **Channels** (how crowded each channel is, and the clearest of 1/6/11). |
+| **Wireless Sniffer** | Turns the screen upright (USB at the bottom) for a long list of every **Wi-Fi network** in range, strongest first, with signal, channel and dBm (open ones in yellow, WEP in red, yours highlighted). The top key switches to every **Bluetooth** device advertising nearby, by name or maker. The bottom key pages through the list. It only listens. The ESP32-S3 hears 2.4 GHz Wi-Fi only (no 5 GHz) and Bluetooth Low Energy only (no Classic). |
 | **Ham Shack Clock** | Big UTC clock, local time, SFI / SSN / A / K, HF band conditions day and night (hamqsl.com). |
 | **LAN Sentinel** | Pings up to 6 hosts in turn and shows up/down and latency, plus a Wi-Fi details page. |
 | **GXL Firewall** | The firewall's (pink in / yellow out) and LAN cache's traffic from a [GXL-LANapp](https://github.com/turkey415/GXL-LANapp) Event Server, with a half-hour trace, like the Ops Console banner. |
@@ -43,8 +45,8 @@ The top key is GPIO14, the bottom one is BOOT (GPIO0).
 | Hold bottom | Open the app menu: top moves down, bottom picks. The app picked starts at every power-on. |
 | Hold top | Open the Wi-Fi & settings hotspot |
 | Hold top while powering on | Same, before trying any network |
-| Press top | Next page (Weather, Ham, Sentinel), next graph range (XRP), firewall ↔ LAN cache (GXL), next colour (Big Clock) |
-| Press bottom | Refresh now (Big Clock: brightness, which every app keeps) |
+| Press top | Next page (Weather, Wi-Fi Meter, Ham, Sentinel), next graph range (XRP), Wi-Fi ↔ Bluetooth (Sniffer), firewall ↔ LAN cache (GXL), next colour (Big Clock) |
+| Press bottom | Refresh now (Big Clock: brightness, which every app keeps; Sniffer: next page of the list; Wi-Fi Meter: reset the meter or ping stats) |
 
 The menu also has **Check for update** and **Wi-Fi & settings**.
 
@@ -95,4 +97,4 @@ On Windows the port is a `COM` number. If upload won't start, hold BOOT, tap RST
 
 ## Adding an app
 
-Write `app_<name>.h` in `TDisplay_Suite/` with a namespace holding `start()`, `run()` and `press(int pin)` (see `app_ham.h` for a small one), draw into `spr` and call `spr.pushSprite(0, 0)`, then include it and add a row to `apps[]` in `TDisplay_Suite.ino`. Wi-Fi, settings, the menu and holding the keys are taken care of already.
+Write `app_<name>.h` in `TDisplay_Suite/` with a namespace holding `start()`, `run()` and `press(int pin)` (call `setPortrait(true)` in `start()` for an upright screen, as `app_sniffer.h` does) (see `app_ham.h` for a small one), draw into `spr` and call `spr.pushSprite(0, 0)`, then include it and add a row to `apps[]` in `TDisplay_Suite.ino`. Wi-Fi, settings, the menu and holding the keys are taken care of already.
