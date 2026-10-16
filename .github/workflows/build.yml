@@ -1,0 +1,70 @@
+# Builds TDisplay_Suite on every pull request. Pushing a tag vX.Y.Z (matching version.h)
+# also publishes a release with the files the devices update from:
+#   TDisplay_Suite.bin       the app, for updates over Wi-Fi
+#   TDisplay_Suite-full.bin  everything at offset 0, for a first flash over USB
+#   version.txt              the version, which devices compare with their own
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+env:
+  FQBN: esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: ESP32 core and libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli config set library.enable_unsafe_install true
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+          arduino-cli lib install "TFT_eSPI@2.5.43" "ArduinoJson@7.4.3" "WiFiManager@2.0.17"
+          arduino-cli lib install --git-url https://github.com/marian-craciunescu/ESP32Ping.git#357e5f5fc983092442921204b3cdefd89e624fe5
+
+      - name: Select the T-Display-S3 setup in TFT_eSPI
+        run: |
+          f=$(arduino-cli config get directories.user)/libraries/TFT_eSPI/User_Setup_Select.h
+          sed -i 's|^#include <User_Setup.h>|//#include <User_Setup.h>|' "$f"
+          sed -i 's|^//#include <User_Setups/Setup206_LilyGo_T_Display_S3.h>|#include <User_Setups/Setup206_LilyGo_T_Display_S3.h>|' "$f"
+          grep -n '^#include' "$f"
+
+      - name: Check the tag matches version.h
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(sed -n 's/#define FW_VERSION "\(.*\)"/\1/p' TDisplay_Suite/version.h)
+          echo "version.h: $v, tag: ${GITHUB_REF_NAME}"
+          test "v$v" = "${GITHUB_REF_NAME}"
+
+      - name: Build
+        run: |
+          arduino-cli compile --fqbn "$FQBN" --output-dir build TDisplay_Suite
+          mkdir dist
+          cp build/TDisplay_Suite.ino.bin dist/TDisplay_Suite.bin
+          cp build/TDisplay_Suite.ino.merged.bin dist/TDisplay_Suite-full.bin
+          sed -n 's/#define FW_VERSION "\(.*\)"/\1/p' TDisplay_Suite/version.h > dist/version.txt
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TDisplay_Suite
+          path: dist/
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --generate-notes
