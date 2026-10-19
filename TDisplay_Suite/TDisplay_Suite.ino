@@ -284,10 +284,11 @@ void checkBattery() {
   updateBattery();
   if (millis() - lastLog > 10000) {
     lastLog = millis();
-    Serial.printf("battery %.2f V  %d%%  %s\n", batV, batteryPct(), onUSB() ? "USB" : "");
+    Serial.printf("battery %.2f V  avg %.2f V  %d%%  %s%s%s\n", batV, slowV, batteryPct(),
+                  onUSB() ? "USB" : "", HWCDC::isPlugged() ? " (computer)" : "",
+                  charging ? " (charging)" : "");
   }
-  // HWCDC::isPlugged: a computer's USB port is attached, so it can't be running on the battery.
-  if (onUSB() || HWCDC::isPlugged() || batV > BAT_EMPTY_V || millis() < 60000) { lowSince = 0; return; }
+  if (onUSB() || batV > BAT_EMPTY_V || millis() < 60000) { lowSince = 0; return; }
   if (!lowSince) lowSince = millis();
   if (millis() - lowSince > 30000) powerOff("Battery empty");
 }
