@@ -4,7 +4,7 @@ Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen).
 
 ## TDisplay_Suite: one firmware, all the apps
 
-`TDisplay_Suite/` is the one to flash. It joins Wi-Fi the easy way and has a menu for picking an app.
+`TDisplay_Suite/` is the one to flash. What's planned next (network probes, a CDP Viewer, Ethernet) is in [TODO.md](TODO.md). It joins Wi-Fi the easy way and has a menu for picking an app.
 
 | App | What it shows |
 | --- | --- |
