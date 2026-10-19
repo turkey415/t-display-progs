@@ -30,7 +30,7 @@ Settings on that page:
 
 - **GXL Event Server**: e.g. `http://10.0.0.5:8000`, and the event's **agent key** (the one the PC agents use). Needed for GXL Firewall.
 - **Callsign** and **local time zone** (POSIX, e.g. `CST6CDT,M3.2.0,M11.1.0`) for the Ham Shack Clock.
-- **LAN Sentinel hosts**: `Label=target,Label=target`, up to 6. A target is an IP, a hostname, or `GW` for the gateway. Empty means gateway, 1.1.1.1, 8.8.8.8 and google.com.
+- **LAN Sentinel hosts**: `Label=target,Label=target`, up to 6. A target is an IP, a hostname, or `GW` for the gateway. Empty means the gateway, Cloudflare (1.1.1.1), Control D (76.76.2.0), Quad9 (9.9.9.9), OpenDNS (208.67.222.222) and google.com.
 - **Units** F or C, **clock** 24 or 12 (for the Weather and Ham clocks; the Big Clock is always 24-hour).
 - **Install updates by itself**: yes or no (see below).
 

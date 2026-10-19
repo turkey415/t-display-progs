@@ -8,7 +8,10 @@
 
 namespace sentinel {
 
-const char* DEFAULT_HOSTS = "Gateway=GW,DNS 1=1.1.1.1,DNS 2=8.8.8.8,Internet=google.com";
+// Public DNS, fastest first as timed from the home network (Oct 2026). 8.8.8.8 is out: some
+// networks block it.
+const char* DEFAULT_HOSTS = "Gateway=GW,Cloudflare=1.1.1.1,Control D=76.76.2.0,Quad9=9.9.9.9,"
+                            "OpenDNS=208.67.222.222,Internet=google.com";
 const int   MAX_HOSTS = 6;
 const uint32_t PING_GAP_MS = 400;   // pause between individual host checks
 
