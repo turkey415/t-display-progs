@@ -107,10 +107,24 @@ void setPortrait(bool p) {
 // ---------- Battery ----------
 // The battery sits behind a 1/2 divider on GPIO4 (PIN_POWER_ON must be HIGH to read it).
 // Readings are smoothed, since Wi-Fi bursts make the voltage dip for a moment.
-// On USB the pin reads the charger's output, above a full cell, so "over 4.3 V" means USB.
+//
+// The board has no pin that senses USB power, so onUSB() checks three things:
+//  1. A computer is attached (HWCDC::isPlugged). Certain, but a power bank or wall charger
+//     never talks to the board, so it only covers computers.
+//  2. The pin reads over 4.3 V. That happens with no battery, or a full one the charger has
+//     stopped feeding.
+//  3. The voltage says a charger is feeding the cell: it jumps up when one is plugged in,
+//     creeps up while charging, and drops when it is unplugged. With a battery in, a charger
+//     holds the pin at 3.7-4.2 V, so check 2 alone misses it (and a weak USB port can keep
+//     even a no-battery reading under 4.3 V).
 const float BAT_USB_V   = 4.30f;
 const float BAT_EMPTY_V = 3.30f;
-float batV = 0;                 // smoothed volts, 0 until the first reading
+const float STEP_UP_V   = 0.05f;   // a jump this big over the last minute = plugged in
+const float STEP_DOWN_V = 0.08f;   // a drop this big = unplugged (Wi-Fi dips are shorter)
+const float TREND_V     = 0.04f;   // a rise this big over 4 minutes = charging
+float batV = 0;                    // smoothed volts, 0 until the first reading
+float slowV = 0;                   // about a one-minute average, to spot jumps against
+bool charging = false;             // check 3's answer
 
 float batteryVolts() {
   uint32_t mv = 0;
@@ -119,16 +133,46 @@ float batteryVolts() {
 }
 
 void updateBattery() {
-  static uint32_t last = 0;
+  static uint32_t last = 0, lastTrend = 0;
+  static float trend[8];           // one reading every 30 s: the last 4 minutes
+  static int trendN = 0, upFor = 0, downFor = 0;
   if (batV && millis() - last < 1000) return;
   last = millis();
   float v = batteryVolts();
-  // Jump straight there on the first reading or when USB goes in or out.
-  if (!batV || (v > BAT_USB_V) != (batV > BAT_USB_V)) batV = v;
-  else batV += (v - batV) * 0.15f;
+  // Jump straight there on the first reading or when it crosses the 4.3 V line.
+  if (!batV || (v > BAT_USB_V) != (batV > BAT_USB_V)) {
+    batV = slowV = v;
+    trendN = 0;
+  } else {
+    batV += (v - batV) * 0.15f;
+    slowV += (batV - slowV) * 0.02f;
+  }
+
+  // A jump up or down that lasts a few seconds.
+  upFor   = batV - slowV > STEP_UP_V   ? upFor + 1   : 0;
+  downFor = slowV - batV > STEP_DOWN_V ? downFor + 1 : 0;
+  if (upFor >= 3)   { charging = true;  slowV = batV; trendN = 0; }
+  if (downFor >= 3) { charging = false; slowV = batV; trendN = 0; }
+
+  // The slow climb while charging (catches a charger that was in before power-on), and the
+  // slow fall on battery.
+  if (millis() - lastTrend >= 30000) {
+    lastTrend = millis();
+    if (trendN == 8) { memmove(trend, trend + 1, 7 * sizeof(float)); trendN = 7; }
+    trend[trendN++] = batV;
+    if (trendN == 8) {
+      float lo = trend[0], hi = trend[0];
+      for (int i = 1; i < 8; i++) { lo = min(lo, trend[i]); hi = max(hi, trend[i]); }
+      if (batV - lo > TREND_V && batV >= hi - 0.01f) charging = true;
+      if (hi - batV > TREND_V && batV <= lo + 0.01f) charging = false;
+    }
+  }
 }
 
-bool onUSB() { updateBattery(); return batV > BAT_USB_V; }
+bool onUSB() {
+  updateBattery();
+  return HWCDC::isPlugged() || batV > BAT_USB_V || charging;
+}
 
 // A Li-ion cell's charge (0-100) from its voltage, at light load.
 int batteryPct() {

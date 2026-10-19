@@ -128,9 +128,8 @@ void drawHosts() {
   spr.drawString(String(upCount) + "/" + String(numHosts) + " up", 160, 169);
 
   spr.setTextDatum(BR_DATUM);
-  float v = batteryVolts();
   spr.setTextColor(C_DIM, C_BG);
-  spr.drawString(v > 4.3f ? "USB" : String(v, 2) + "V", 314, 169);
+  spr.drawString(onUSB() ? "USB" : String(batV, 2) + "V", 314, 169);
 }
 
 void drawWifi() {
