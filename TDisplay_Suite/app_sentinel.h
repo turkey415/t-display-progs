@@ -172,7 +172,7 @@ void drawWifi() {
 void render() {
   spr.fillSprite(C_BG);
   if (page == 0) drawHosts(); else drawWifi();
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------

@@ -327,7 +327,7 @@ void drawChannels() {
 
 void render() {
   spr.fillSprite(C_BG);
-  header(String(TITLES[page]) + "  " + (wifiUp() ? fit(WiFi.SSID(), 190, 2) : String("")), String(page + 1) + "/" + String(NUM_PAGES));
+  header(String(TITLES[page]) + "  " + (wifiUp() ? fit(WiFi.SSID(), 140, 2) : String("")), String(page + 1) + "/" + String(NUM_PAGES));
   if (!wifiUp()) centered("Not connected", 90);
   else switch (page) {
     case 0: drawMeter(); break;
@@ -336,7 +336,7 @@ void render() {
     case 3: drawPing(); break;
     default: drawChannels(); break;
   }
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------

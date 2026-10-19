@@ -391,7 +391,7 @@ void wxHeader(const String& left, const String& right, uint16_t rightCol = C_DIM
     ev.toUpperCase();
     spr.drawString(ev + (a.count > 1 ? " x" + String(a.count) : ""), 6, 2);
     spr.setTextDatum(TR_DATUM);
-    spr.drawString(alerts.n > 1 ? "+" + String(alerts.n - 1) + " more" : a.until.length() ? "until " + a.until : "", 314, 2);
+    spr.drawString(alerts.n > 1 ? "+" + String(alerts.n - 1) + " more" : a.until.length() ? "until " + a.until : "", hdrRight(), 2);
     return;
   }
   header(left, right, C_ACC, rightCol);
@@ -618,7 +618,7 @@ void render() {
     default: drawAlerts(); break;
   }
   alertBorder();
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------

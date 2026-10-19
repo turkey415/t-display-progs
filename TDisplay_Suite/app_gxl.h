@@ -207,7 +207,7 @@ void render() {
       spr.drawString(problem, 160, 168);
     }
   }
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------
