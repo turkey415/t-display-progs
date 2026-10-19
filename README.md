@@ -16,6 +16,10 @@ Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen).
 | **Ham Shack Clock** | Big UTC clock, local time, SFI / SSN / A / K, HF band conditions day and night (hamqsl.com). |
 | **LAN Sentinel** | Pings up to 6 hosts in turn and shows up/down and latency, plus a Wi-Fi details page. |
 | **GXL Firewall** | The firewall's (pink in / yellow out) and LAN cache's traffic from a [GXL-LANapp](https://github.com/turkey415/GXL-LANapp) Event Server, with a half-hour trace, like the Ops Console banner. |
+| **mDNS Browser** | Lists everything announcing itself on the network over multicast DNS (Bonjour): Chromecasts, AirPlay, printers, HomeKit, SSH and web servers, and more, by device name with its type, IP and port. If a full scan hears nothing it says so, which points at multicast being blocked on the Wi-Fi (AP isolation / no IGMP). Listens only. |
+| **Ping Graph** | A scrolling latency graph to one target, pinging about twice a second, with the current, average and jitter figures, loss percentage, and a count of spikes over the threshold. The top key steps through the LAN Sentinel targets (gateway first), so the game or GXL server is one tap away. |
+| **DHCP Finder** | Broadcasts a DHCP request and lists every server that answers, with its address, MAC, and the address and gateway it offered. One server is normal; a second turns the screen red (a rogue DHCP server, usually someone's home router). It only asks and listens; it never takes an address or changes the device's own networking. |
+| **LAN Scanner** | Sweeps the subnet by ARP and lists every device that answers, with its IP, MAC and maker (from the MAC), flagging ones that appear after the first sweep. Local subnet only (/24 around the device's own IP). Sends only ARP requests. |
 
 ### Wi-Fi and settings
 

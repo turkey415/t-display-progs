@@ -3,7 +3,8 @@
   ------------------------------------------------------------------------
   One firmware, several apps, picked from a menu on the device:
     Big Clock, Weather Clock, XRP Ticker, Wi-Fi Meter, Wireless Sniffer,
-    Ham Shack Clock, LAN Sentinel, GXL Firewall
+    Ham Shack Clock, LAN Sentinel, GXL Firewall, mDNS Browser, Ping Graph,
+    DHCP Finder, LAN Scanner
 
   Wi-Fi: tries the last network set up from a phone, then the home network in secrets.h
   (if there is one). If neither is in range it opens the "TDisplay-Setup" hotspot: join it
@@ -37,6 +38,10 @@
 #include "app_gxl.h"
 #include "app_sniffer.h"
 #include "app_wifimeter.h"
+#include "app_mdns.h"
+#include "app_pinggraph.h"
+#include "app_dhcp.h"
+#include "app_lanscan.h"
 #include "updater.h"
 
 #if __has_include("secrets.h")
@@ -74,6 +79,10 @@ App apps[] = {
   {"Ham Shack Clock", "UTC, solar, HF bands",     ham::start,      ham::run,      ham::press},
   {"LAN Sentinel",    "Ping hosts, Wi-Fi info",   sentinel::start, sentinel::run, sentinel::press},
   {"GXL Firewall",    "Firewall + cache Mbps",    gxl::start,      gxl::run,      gxl::press},
+  {"mDNS Browser",    "Who's on the network",     mdnsbrowser::start, mdnsbrowser::run, mdnsbrowser::press},
+  {"Ping Graph",      "Latency + jitter graph",   pinggraph::start, pinggraph::run, pinggraph::press},
+  {"DHCP Finder",     "Find rogue DHCP servers",  dhcpfinder::start, dhcpfinder::run, dhcpfinder::press},
+  {"LAN Scanner",     "Devices on the subnet",    lanscan::start,   lanscan::run,   lanscan::press},
 };
 const int NUM_APPS = sizeof(apps) / sizeof(apps[0]);
 int current = 0;                // index of the running app

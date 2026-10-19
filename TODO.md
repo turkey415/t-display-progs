@@ -105,14 +105,12 @@ A **HiLetgo W5500 module** (Amazon B08KXM8TKJ) wired to the T-Display's header p
 
 Small network tools in the style of the Wi-Fi Meter and Wireless Sniffer.
 
-- **mDNS browser:** list everything announcing itself on the Wi-Fi (Chromecasts, AirPlay, printers, HomeKit, Spotify Connect, SSH and web servers), grouped by service, with name, IP and port. Shows whether multicast actually crosses the Wi-Fi, which is a common wireless problem. ESP32 has mDNS built in (`MDNS.queryService`).
-- **Rogue DHCP finder:** send a DHCP Discover and list every server that answers. More than one = someone plugged in a home router. Big one for LAN parties.
-- **LAN scanner:** sweep the subnet (ARP), list every device with IP, MAC and maker (from the MAC prefix), and flag new ones.
+Built in v1.4.0: **mDNS Browser**, **Ping Graph**, **DHCP Finder** (rogue DHCP), **LAN Scanner**.
+
+Still ideas:
 - **SSDP/UPnP browser:** the other discovery protocol (smart TVs, consoles, routers), next to mDNS.
 - **Game server check:** query CS servers (Source A2S) for name, map, players and ping, for the tournament.
-- **Ping graph / jitter:** a scrolling latency graph to one target (the game server), with jitter and loss, to catch lag spikes.
 - **Speed test:** HTTP download test, or an iperf3-style test against the Slate 7 or the GXL server.
-- **Deauth / attack detector:** listen in promiscuous mode and count deauth and disassociation frames per channel, the sign of someone knocking people off Wi-Fi. Listen only.
 - **Roaming tracker:** walk around and log which access point (BSSID) it's on, when it switches, and the signal at each switch.
 - **Traceroute:** hop-by-hop path and latency to a host.
 - **DNS benchmark:** time the public DNS servers from wherever it is, like the test that picked LAN Sentinel's list.
