@@ -1,5 +1,7 @@
 // Weather Clock
-//   Page 1: local time, current conditions, feels-like / humidity / wind / hi-lo
+//   Page 1: local time, current conditions, feels-like / humidity / wind / hi-lo.
+//           With a Shelly sensor IP set (Wi-Fi setup page), also shows that local temp
+//           (e.g. the well house) beside the online one, as AIR and WELL.
 //   Page 2: 5-day forecast
 //   Page 3: sunrise / sunset with the sun's place on its arc, and the moon's phase
 //   Page 4: weather alerts from the US National Weather Service (weather.gov), every 5 min.
@@ -26,6 +28,9 @@ const uint32_t WX_RETRY_MS  = 60UL * 1000UL;
 const uint32_t LOC_RETRY_MS = 60UL * 1000UL;
 const uint32_t LOC_EVERY_MS = 60UL * 60UL * 1000UL;
 const uint32_t ALERT_EVERY_MS = 5UL * 60UL * 1000UL;
+const uint32_t SHELLY_EVERY_MS = 60UL * 1000UL;        // local sensor, so poll gently
+const uint32_t SHELLY_RETRY_MS = 15UL * 1000UL;
+const uint32_t SHELLY_STALE_MS = 10UL * 60UL * 1000UL; // older than this: stop showing it
 const int      NUM_PAGES    = 4;
 const int      MAX_ALERTS   = 6;
 
@@ -54,6 +59,20 @@ struct Weather {
   int      dDay[5];             // seconds of daylight
   bool     fahrenheit;   // the units it was fetched in
 } wx;
+
+// An optional local temperature from a Shelly device on the Wi-Fi (e.g. a sensor in the well
+// house), shown beside the online temperature. Reads the Shelly's local HTTP API, which is on
+// by default with no login unless a device password was set.
+struct Shelly {
+  bool     ok;          // a good reading has been seen
+  float    tC, tF;
+  uint32_t at;          // millis() of the last good reading
+} shelly;
+
+uint32_t lastShelly = 0;
+
+// A good reading, recent enough to put on screen.
+bool shellyFresh() { return shelly.ok && cfg.shelly.length() && millis() - shelly.at < SHELLY_STALE_MS; }
 
 // Active alerts, one row per kind of alert (three Flood Warnings are one row, count 3).
 struct Alert {
@@ -214,6 +233,65 @@ bool fetchWeather() {
   wx.fetchedAt = millis();
   Serial.printf("weather %.1f, code %d, offset %d\n", wx.temp, wx.code, wx.utcOffset);
   return true;
+}
+
+// Store a reading (Celsius and Fahrenheit) if the Celsius value looks real.
+bool shellyStore(float tC, float tF) {
+  if (isnan(tC) || tC < -55 || tC > 125) return false;   // DS18B20 range, rejects a missing value
+  shelly.tC = tC;
+  shelly.tF = isnan(tF) ? tC * 9.0f / 5.0f + 32.0f : tF;
+  shelly.ok = true;
+  shelly.at = millis();
+  Serial.printf("shelly %.1f C / %.1f F\n", shelly.tC, shelly.tF);
+  return true;
+}
+
+// Pull a temperature from one Shelly URL. gen2 = the RPC status (Plus/Pro), else the Gen1 status.
+bool shellyTry(const String& url, bool gen2) {
+  WiFiClient client;
+  HTTPClient http;
+  http.setConnectTimeout(3000);
+  http.setTimeout(4000);
+  if (!http.begin(client, url)) return false;
+  int code = http.GET();
+  if (code != 200) { http.end(); return false; }
+  String body = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) return false;
+
+  if (gen2) {
+    // Gen2+: any "temperature:<id>" component carries tC / tF.
+    for (JsonPair kv : doc.as<JsonObject>()) {
+      if (strncmp(kv.key().c_str(), "temperature:", 12) == 0) {
+        if (shellyStore(kv.value()["tC"] | NAN, kv.value()["tF"] | NAN)) return true;
+      }
+    }
+    return false;
+  }
+  // Gen1: H&T ("tmp"), a DS18B20 add-on ("ext_temperature": {"0": {...}}), or a bare "temperature".
+  if (doc["tmp"].is<JsonObject>()) {
+    if (doc["tmp"]["is_valid"] | true)
+      if (shellyStore(doc["tmp"]["tC"] | NAN, doc["tmp"]["tF"] | NAN)) return true;
+  }
+  JsonObject ext = doc["ext_temperature"];
+  if (ext)
+    for (JsonPair kv : ext)
+      if (shellyStore(kv.value()["tC"] | NAN, kv.value()["tF"] | NAN)) return true;
+  if (doc["temperature"].is<float>())
+    if (shellyStore(doc["temperature"] | NAN, NAN)) return true;
+  return false;
+}
+
+// Read the configured Shelly. Tries the Gen2 RPC first, then the Gen1 status.
+bool fetchShelly() {
+  if (!cfg.shelly.length() || !wifiUp()) return false;
+  String host = cfg.shelly;
+  if (!host.startsWith("http")) host = "http://" + host;
+  while (host.endsWith("/")) host.remove(host.length() - 1);
+  if (shellyTry(host + "/rpc/Shelly.GetStatus", true)) return true;
+  return shellyTry(host + "/status", false);
 }
 
 // Active alerts for this spot from weather.gov. Only the few fields shown are kept, so a long
@@ -444,8 +522,21 @@ void drawNow() {
   spr.setTextColor(C_ACC, C_BG);
   spr.drawString(wxText(wx.code), 6, 88);
 
-  drawIcon(268, 44, 1.0f, wx.code, wx.isDay);
-  drawTemp(268, 72, wx.temp, 6, C_TEXT);
+  if (shellyFresh()) {
+    // Two temperatures side by side: the online air temp and the local well-house sensor.
+    drawIcon(268, 34, 0.75f, wx.code, wx.isDay);
+    float well = cfg.fahrenheit ? shelly.tF : shelly.tC;
+    spr.setTextFont(1);
+    spr.setTextDatum(TC_DATUM);
+    spr.setTextColor(C_DIM, C_BG);
+    spr.drawString("AIR", 216, 64);
+    spr.drawString("WELL", 288, 64);
+    drawTemp(216, 78, wx.temp, 4, C_TEXT);
+    drawTemp(288, 78, well,    4, C_ACC);
+  } else {
+    drawIcon(268, 44, 1.0f, wx.code, wx.isDay);
+    drawTemp(268, 72, wx.temp, 6, C_TEXT);
+  }
 
   String spd = wx.fahrenheit ? "m" : "k";
   statBox(0,   "Feels",  String((int)lroundf(wx.feels)));
@@ -663,13 +754,19 @@ void run() {
     if (!fetchWeather() && !wx.ok) status = "Weather failed, retrying";
   }
 
+  // The local Shelly sensor (if one is set): quick, so poll it on its own short clock.
+  if (up && cfg.shelly.length()) {
+    uint32_t sdue = shelly.ok ? SHELLY_EVERY_MS : SHELLY_RETRY_MS;
+    if (millis() - lastShelly > sdue) { lastShelly = millis(); fetchShelly(); }
+  }
+
   static uint32_t lastDraw = 0;         // 4 times a second, for the flashing border
   if (millis() - lastDraw > 250) { lastDraw = millis(); render(); }
 }
 
 void press(int pin) {
   if (pin == BTN_B) page = (page + 1) % NUM_PAGES;
-  else { fetchWeather(); fetchAlerts(); }
+  else { fetchWeather(); fetchAlerts(); lastShelly = millis(); fetchShelly(); }
   render();
 }
 

@@ -34,6 +34,7 @@ struct Settings {
   String callsign;
   String tz;          // POSIX time zone for the Ham Shack Clock's local time
   String hosts;       // LAN Sentinel: "Label=target,Label=target"; target "GW" = the gateway
+  String shelly;      // Weather Clock: a Shelly's IP/host for a local temperature, "" = off
   bool   fahrenheit;
   bool   clock24;
   bool   autoUpdate;  // install new releases from GitHub by itself

@@ -63,6 +63,9 @@
 #ifndef DEFAULT_CALLSIGN
 #define DEFAULT_CALLSIGN "N0CALL"
 #endif
+#ifndef DEFAULT_SHELLY
+#define DEFAULT_SHELLY ""
+#endif
 
 const char* AP_NAME = "TDisplay-Setup";
 const char* DEFAULT_TZ = "CST6CDT,M3.2.0,M11.1.0";      // US Central with DST
@@ -110,6 +113,7 @@ void storeSettings() {
   prefs.putString("call", cfg.callsign);
   prefs.putString("tz", cfg.tz);
   prefs.putString("hosts", cfg.hosts);
+  prefs.putString("shelly", cfg.shelly);
   prefs.putBool("fahr", cfg.fahrenheit);
   prefs.putBool("h24", cfg.clock24);
   prefs.putBool("auto", cfg.autoUpdate);
@@ -124,6 +128,7 @@ void loadSettings() {
   cfg.callsign   = prefs.getString("call", DEFAULT_CALLSIGN);
   cfg.tz         = prefs.getString("tz", DEFAULT_TZ);
   cfg.hosts      = prefs.getString("hosts", "");
+  cfg.shelly     = prefs.getString("shelly", DEFAULT_SHELLY);
   cfg.fahrenheit = prefs.getBool("fahr", true);
   cfg.clock24    = prefs.getBool("h24", true);
   cfg.autoUpdate = prefs.getBool("auto", true);
@@ -149,6 +154,7 @@ WiFiManagerParameter* pKey;
 WiFiManagerParameter* pCall;
 WiFiManagerParameter* pTz;
 WiFiManagerParameter* pHosts;
+WiFiManagerParameter* pShelly;
 WiFiManagerParameter* pUnits;
 WiFiManagerParameter* pClock;
 WiFiManagerParameter* pAuto;
@@ -159,6 +165,7 @@ void saveParams() {
   cfg.callsign = pCall->getValue();    cfg.callsign.trim();
   cfg.tz       = pTz->getValue();      cfg.tz.trim();
   cfg.hosts    = pHosts->getValue();   cfg.hosts.trim();
+  cfg.shelly   = pShelly->getValue();  cfg.shelly.trim();
   String u = pUnits->getValue(), c = pClock->getValue(), a = pAuto->getValue();
   cfg.fahrenheit = !(u.startsWith("C") || u.startsWith("c"));
   cfg.clock24    = !c.startsWith("12");
@@ -216,10 +223,11 @@ void runPortal() {
   pCall   = new WiFiManagerParameter("call", "Callsign (Ham Shack Clock)", cfg.callsign.c_str(), 12);
   pTz     = new WiFiManagerParameter("tz", "Local time zone, POSIX (Big Clock, Ham Shack Clock)", cfg.tz.c_str(), 48);
   pHosts  = new WiFiManagerParameter("hosts", "LAN Sentinel hosts: Label=IP,Label=IP (GW = gateway, up to 6)", cfg.hosts.c_str(), 200);
+  pShelly = new WiFiManagerParameter("shelly", "Shelly temp sensor IP (Weather Clock 2nd temp; blank = off)", cfg.shelly.c_str(), 40);
   pUnits  = new WiFiManagerParameter("units", "Units: F or C", cfg.fahrenheit ? "F" : "C", 2);
   pClock  = new WiFiManagerParameter("clock", "Weather and Ham clocks: 24 or 12", cfg.clock24 ? "24" : "12", 3);
   pAuto   = new WiFiManagerParameter("auto", "Install updates from GitHub by itself: yes or no", cfg.autoUpdate ? "yes" : "no", 4);
-  for (auto* p : {pServer, pKey, pCall, pTz, pHosts, pUnits, pClock, pAuto}) wm.addParameter(p);
+  for (auto* p : {pServer, pKey, pCall, pTz, pHosts, pShelly, pUnits, pClock, pAuto}) wm.addParameter(p);
 
   std::vector<const char*> menu = {"wifi", "param", "info", "update", "restart"};   // update: upload a .bin
   wm.setMenu(menu);
