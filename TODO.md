@@ -75,7 +75,23 @@ There could be several probes out at any time, so the viewer must handle more th
 | **Banana Pi BPI-R3** | 2× 2.5G SFP | Cheaper SFP option. |
 | **Raspberry Pi 4/5** | 1 GbE (+ USB 2.5G adapter) | Easy to code for, PoE HAT available. |
 
-Plan: get the ESP32 probe working first (cheap, many of them), then teach the Slate 7 to send the same messages, then decide on SFP+ if fiber ports need testing.
+Plan: get the ESP32 probe working first (cheap, many of them), then build the pocket gigabit probe below, then teach the Slate 7 to send the same messages, then decide on SFP+ if fiber ports need testing.
+
+### Pocket gigabit probe (chosen)
+
+The Slate 7 is too big to slide in and out of a pocket, so the handheld gigabit probe is:
+
+| Part | Why |
+| --- | --- |
+| **Radxa Zero 3E, 2 GB, with GPIO** (Amazon B0CZD1C54N) | RK3566, gigabit Ethernet, Pi Zero size (65 × 30 mm). The **3E** has Ethernet; the 3W has Wi-Fi and no Ethernet, so not that one. |
+| **Radxa Zero 3E PoE HAT** (Amazon B0D1KF1L7G) | Powered straight from the switch port, no splitter. Check it does 802.3af (what the 3560s give). |
+| **ESP32-C3 SuperMini** (USB-C) on the 3E's USB port | The 3E has no radio. The C3 is its ESP-NOW radio, so it reaches the T-Display the same way the ESP32 probes do, on any port or VLAN, with no network needed. |
+| **microSD card**, 16-32 GB | The 3E has no built-in storage. |
+
+- **The 3E** runs Linux (Armbian or Radxa's Debian) and does the work: CDP/LLDP (tcpdump or lldpd), DHCP, pings, DNS, and **iperf3 speed tests at gigabit**. It also sends the results by UDP over Ethernet as the bonus "network path".
+- **The C3** runs a small sketch: read the probe message over USB serial, send it by ESP-NOW. Same message as every other probe, so the T-Display lists it like any probe, marked as gigabit.
+- Considered: an **Orange Pi Zero 3** (gigabit + Wi-Fi + Bluetooth on one board) would talk to the T-Display over Bluetooth instead of ESP-NOW and needs a PoE splitter; the Radxa stack is slimmer and keeps one radio link for every probe.
+- To check once it arrives: real iperf3 speed, PoE HAT boot on the 3560s, how long it takes from plug-in to first results.
 
 ## Ethernet on the T-Display itself
 
@@ -84,6 +100,22 @@ A **HiLetgo W5500 module** (Amazon B08KXM8TKJ) wired to the T-Display's header p
 - Lets a single T-Display run the probe tests itself, in one handheld box.
 - **PoE for it:** a PoE splitter with a USB-C 5 V output. One cable from the switch: data goes to the W5500, power to the T-Display's USB-C (and charges the battery).
 - Also possible: a "use Ethernet if connected" option for the other apps (Sentinel, GXL Firewall).
+
+## More app ideas
+
+Small network tools in the style of the Wi-Fi Meter and Wireless Sniffer.
+
+- **mDNS browser:** list everything announcing itself on the Wi-Fi (Chromecasts, AirPlay, printers, HomeKit, Spotify Connect, SSH and web servers), grouped by service, with name, IP and port. Shows whether multicast actually crosses the Wi-Fi, which is a common wireless problem. ESP32 has mDNS built in (`MDNS.queryService`).
+- **Rogue DHCP finder:** send a DHCP Discover and list every server that answers. More than one = someone plugged in a home router. Big one for LAN parties.
+- **LAN scanner:** sweep the subnet (ARP), list every device with IP, MAC and maker (from the MAC prefix), and flag new ones.
+- **SSDP/UPnP browser:** the other discovery protocol (smart TVs, consoles, routers), next to mDNS.
+- **Game server check:** query CS servers (Source A2S) for name, map, players and ping, for the tournament.
+- **Ping graph / jitter:** a scrolling latency graph to one target (the game server), with jitter and loss, to catch lag spikes.
+- **Speed test:** HTTP download test, or an iperf3-style test against the Slate 7 or the GXL server.
+- **Deauth / attack detector:** listen in promiscuous mode and count deauth and disassociation frames per channel, the sign of someone knocking people off Wi-Fi. Listen only.
+- **Roaming tracker:** walk around and log which access point (BSSID) it's on, when it switches, and the signal at each switch.
+- **Traceroute:** hop-by-hop path and latency to a host.
+- **DNS benchmark:** time the public DNS servers from wherever it is, like the test that picked LAN Sentinel's list.
 
 ## Smaller things
 
