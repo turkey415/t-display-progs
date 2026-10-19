@@ -216,7 +216,7 @@ void drawBle() {
 void render() {
   spr.fillSprite(C_BG);
   if (view == 0) drawWifi(); else drawBle();
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------

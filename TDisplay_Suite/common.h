@@ -104,16 +104,91 @@ void setPortrait(bool p) {
   spr.createSprite(p ? 170 : 320, p ? 320 : 170);
 }
 
+// ---------- Battery ----------
+// The battery sits behind a 1/2 divider on GPIO4 (PIN_POWER_ON must be HIGH to read it).
+// Readings are smoothed, since Wi-Fi bursts make the voltage dip for a moment.
+// On USB the pin reads the charger's output, above a full cell, so "over 4.3 V" means USB.
+const float BAT_USB_V   = 4.30f;
+const float BAT_EMPTY_V = 3.30f;
+float batV = 0;                 // smoothed volts, 0 until the first reading
+
+float batteryVolts() {
+  uint32_t mv = 0;
+  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(PIN_BAT);
+  return mv / 8 * 2.0f / 1000.0f;
+}
+
+void updateBattery() {
+  static uint32_t last = 0;
+  if (batV && millis() - last < 1000) return;
+  last = millis();
+  float v = batteryVolts();
+  // Jump straight there on the first reading or when USB goes in or out.
+  if (!batV || (v > BAT_USB_V) != (batV > BAT_USB_V)) batV = v;
+  else batV += (v - batV) * 0.15f;
+}
+
+bool onUSB() { updateBattery(); return batV > BAT_USB_V; }
+
+// A Li-ion cell's charge (0-100) from its voltage, at light load.
+int batteryPct() {
+  static const float V[] = {3.30, 3.50, 3.61, 3.69, 3.73, 3.77, 3.80, 3.84, 3.87, 3.95, 4.02, 4.11, 4.20};
+  static const int   P[] = {0,    2,    5,    10,   20,   30,   40,   50,   60,   70,   80,   90,   100};
+  const int N = sizeof(P) / sizeof(P[0]);
+  updateBattery();
+  if (batV <= V[0]) return 0;
+  for (int i = 1; i < N; i++)
+    if (batV < V[i]) return P[i - 1] + (P[i] - P[i - 1]) * (batV - V[i - 1]) / (V[i] - V[i - 1]);
+  return 100;
+}
+
+// The badge in the top-right corner: "87%" and a battery that empties, or a charging bolt on
+// USB. It is BADGE_W wide; header() keeps its right-hand text clear of it.
+const int BADGE_W = 52;
+
+int hdrRight() { return spr.width() - BADGE_W - 4; }
+
+void drawBattery(int y = 5) {
+  int x = spr.width() - 23;                    // the battery body: 18 x 10, nub on the right
+  bool usb = onUSB();
+  int pct = batteryPct();
+  uint16_t c = usb ? C_GOOD : pct > 50 ? C_GOOD : pct > 20 ? C_WARN : C_BAD;
+  spr.fillRoundRect(x - 29, y - 2, 52, 14, 3, C_BG);   // keeps it readable on any background
+  spr.drawRect(x, y, 18, 10, C_TEXT);
+  spr.fillRect(x + 18, y + 3, 2, 4, C_TEXT);
+  if (usb) {
+    spr.fillTriangle(x + 10, y + 1, x + 5, y + 6, x + 9, y + 5, c);    // lightning bolt
+    spr.fillTriangle(x + 8, y + 9, x + 13, y + 4, x + 9, y + 5, c);
+  } else {
+    spr.fillRect(x + 2, y + 2, max(1, 14 * pct / 100), 6, c);
+  }
+  spr.setTextFont(1);
+  spr.setTextDatum(MR_DATUM);
+  spr.setTextColor(usb ? C_DIM : c, C_BG);
+  spr.drawString(usb ? "USB" : String(pct) + "%", x - 3, y + 5);
+}
+
+// Every screen goes out through here, so the battery shows everywhere.
+// Big Clock's digits fill the top, so it asks for the badge lower down.
+void show(int batteryY = 5) {
+  drawBattery(batteryY);
+  spr.pushSprite(0, 0);
+}
+
 // ---------- Helpers ----------
+String fit(String s, int w, int font);
+
 void header(const String& left, const String& right, uint16_t leftCol = C_ACC, uint16_t rightCol = C_DIM) {
+  int lx = portrait ? 4 : 6;
   spr.fillRect(0, 0, spr.width(), 20, C_HDR);
   spr.setTextFont(2);
   spr.setTextColor(leftCol, C_HDR);
   spr.setTextDatum(TL_DATUM);
-  spr.drawString(left, portrait ? 4 : 6, 2);
+  int room = hdrRight() - lx - (right.length() ? spr.textWidth(right, 2) + 8 : 0);
+  spr.drawString(fit(left, max(room, 40), 2), lx, 2);
   spr.setTextColor(rightCol, C_HDR);
   spr.setTextDatum(TR_DATUM);
-  spr.drawString(right, spr.width() - (portrait ? 4 : 6), 2);
+  spr.drawString(right, hdrRight(), 2);
 }
 
 void centered(const String& msg, int y, int font = 4, uint16_t col = C_DIM) {
@@ -181,9 +256,6 @@ String fmtDur(uint32_t s) {
   return String(s / 86400) + "d" + String((s % 86400) / 3600) + "h";
 }
 
-float batteryVolts() {
-  return analogReadMilliVolts(PIN_BAT) * 2.0f / 1000.0f;
-}
 
 bool wifiUp() { return WiFi.status() == WL_CONNECTED; }
 

@@ -56,7 +56,7 @@ void render() {
   time_t now = time(nullptr);
   if (now < 1700000000) {
     centered("Setting the time...", 80, 4);
-    spr.pushSprite(0, 0);
+    show(155);
     return;
   }
   struct tm t;
@@ -73,7 +73,7 @@ void render() {
   spr.fillRect(0, 167, 320, 3, ghost());
   spr.fillRect(0, 167, w, 3, spr.alphaBlend(110, col(), C_BG));
   if (!wifiUp()) spr.fillCircle(314, 6, 3, C_BAD);     // a red dot while Wi-Fi is down
-  spr.pushSprite(0, 0);
+  show(155);
 }
 
 void start() {

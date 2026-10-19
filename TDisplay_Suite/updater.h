@@ -34,7 +34,7 @@ void screen(const String& title, const String& line1, const String& line2 = "", 
   centered(title, 60, 4, C_TEXT);
   centered(line1, 96, 2, col);
   centered(line2, 116, 2);
-  spr.pushSprite(0, 0);
+  show();
 }
 
 String latest(String& problem) {
@@ -75,7 +75,7 @@ void check(bool shown) {
     screen("Updating to v" + v, "Don't unplug", String(pct) + "%", C_WARN);
     spr.drawRect(40, 136, 240, 12, C_DIM);
     spr.fillRect(42, 138, 236 * pct / 100, 8, C_WARN);
-    spr.pushSprite(0, 0);
+    show();
   });
   httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   httpUpdate.rebootOnUpdate(true);

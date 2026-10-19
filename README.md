@@ -47,6 +47,13 @@ The top key is GPIO14, the bottom one is BOOT (GPIO0).
 | Hold top while powering on | Same, before trying any network |
 | Press top | Next page (Weather, Wi-Fi Meter, Ham, Sentinel), next graph range (XRP), Wi-Fi ↔ Bluetooth (Sniffer), firewall ↔ LAN cache (GXL), next colour (Big Clock) |
 | Press bottom | Refresh now (Big Clock: brightness, which every app keeps; Sniffer: next page of the list; Wi-Fi Meter: reset the meter or ping stats) |
+| Menu → **Power off** | Turn it off (deep sleep). Press the **top** key (or RST) to turn it back on. |
+
+### Battery
+
+With a LiPo plugged into the battery connector, every screen shows the charge in the top-right corner (Big Clock: bottom-right): a percentage and a battery that empties, green, then yellow under 50%, red under 20%. On USB it shows a charging bolt and `USB`. The percentage comes from the cell's voltage, so it's a guide, and it reads a little low while Wi-Fi is busy.
+
+The board has no power switch: the battery is wired straight to the charger. **Power off** puts it in deep sleep (screen, backlight and Wi-Fi off), which still draws a little, so for weeks on a shelf, unplug the battery. On battery it also turns itself off when the cell is flat, so it doesn't keep browning out and restarting.
 
 The menu also has **Check for update** and **Wi-Fi & settings**.
 

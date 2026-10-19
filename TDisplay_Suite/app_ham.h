@@ -194,7 +194,7 @@ void drawBands() {
 void render() {
   spr.fillSprite(C_BG);
   if (page == 0) drawClock(); else drawBands();
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------

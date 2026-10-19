@@ -17,6 +17,7 @@
     hold bottom      : app menu (top = next, bottom = pick)
     hold top         : Wi-Fi & settings hotspot
     hold top at power-on : Wi-Fi & settings hotspot
+    menu > Power off : deep sleep (screen and Wi-Fi off); the top key or RST turns it back on
     short presses    : up to the app (usually top = next page, bottom = refresh)
 
   Libraries: TFT_eSPI (Setup206_LilyGo_T_Display_S3 selected), ArduinoJson 7,
@@ -25,6 +26,7 @@
 
 #include <WiFiManager.h>
 #include <Preferences.h>
+#include <driver/rtc_io.h>
 #include "version.h"
 #include "common.h"
 #include "app_clock.h"
@@ -165,7 +167,7 @@ void splash(const String& msg) {
   centered(apps[current].name, 86, 2, C_ACC);
   centered(msg, 112, 2);
   centered("v" FW_VERSION, 150, 1);
-  spr.pushSprite(0, 0);
+  show();
 }
 
 bool waitConnect(const String& what, uint32_t ms) {
@@ -194,7 +196,7 @@ void showSetup() {
   spr.drawString("Setup: settings only", 160, 118);
   spr.setTextColor(C_DIM, C_BG);
   spr.drawString("Restarts after saving, or in 5 min", 160, 148);
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // Opens the hotspot with the setup page. Restarts afterwards, so new settings take effect cleanly.
@@ -245,10 +247,55 @@ void connectWifi(bool forceSetup) {
   runPortal();
 }
 
+// ---------- Power ----------
+// The board has no power switch (the battery is wired straight to the charger), so "off" is
+// deep sleep: screen, backlight and radio off, a tiny trickle of current. The top key wakes
+// it (not the bottom one: that is the BOOT key). Unplug the battery for a true off.
+void powerOff(const char* why) {
+  setPortrait(false);
+  spr.fillSprite(C_BG);
+  centered(why, 62, 4, C_TEXT);
+  centered("Press the TOP key to turn on", 100, 2, C_DIM);
+  show();
+  delay(2000);
+  while (digitalRead(BTN_A) == LOW || digitalRead(BTN_B) == LOW) delay(10);   // let go first
+  delay(50);
+
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  tft.writecommand(0x28);            // display off
+  tft.writecommand(0x10);            // display sleep
+  ledcDetach(PIN_LCD_BL);
+  pinMode(PIN_LCD_BL, OUTPUT);   digitalWrite(PIN_LCD_BL, LOW);
+  pinMode(PIN_POWER_ON, OUTPUT); digitalWrite(PIN_POWER_ON, LOW);   // LCD power off
+  gpio_hold_en((gpio_num_t)PIN_LCD_BL);     // keep both low while asleep
+  gpio_hold_en((gpio_num_t)PIN_POWER_ON);
+  gpio_deep_sleep_hold_en();
+
+  rtc_gpio_pullup_en((gpio_num_t)BTN_B);
+  rtc_gpio_pulldown_dis((gpio_num_t)BTN_B);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_B, 0);
+  esp_deep_sleep_start();
+}
+
+// On battery, turns off when the cell is flat, before it browns out and restarts over and over.
+void checkBattery() {
+  static uint32_t lowSince = 0, lastLog = 0;
+  updateBattery();
+  if (millis() - lastLog > 10000) {
+    lastLog = millis();
+    Serial.printf("battery %.2f V  %d%%  %s\n", batV, batteryPct(), onUSB() ? "USB" : "");
+  }
+  // HWCDC::isPlugged: a computer's USB port is attached, so it can't be running on the battery.
+  if (onUSB() || HWCDC::isPlugged() || batV > BAT_EMPTY_V || millis() < 60000) { lowSince = 0; return; }
+  if (!lowSince) lowSince = millis();
+  if (millis() - lowSince > 30000) powerOff("Battery empty");
+}
+
 // ---------- Menu ----------
-// The apps, then two actions. Seven rows show at a time; it scrolls.
+// The apps, then three actions. Seven rows show at a time; it scrolls.
 const int ROW_H = 21, ROWS_SHOWN = 7;
-const int ITEMS = NUM_APPS + 2;      // + "Check for update", "Wi-Fi & settings"
+const int ITEMS = NUM_APPS + 3;      // + "Check for update", "Wi-Fi & settings", "Power off"
 bool inMenu = false;
 int  menuPick = 0, menuTop = 0;
 uint32_t menuSince = 0;
@@ -265,8 +312,10 @@ void drawMenu() {
     uint16_t bg = sel ? C_HDR : C_BG;
     if (sel) spr.fillRoundRect(2, y, 312, ROW_H - 1, 4, C_HDR);
     if (i == current) spr.fillCircle(10, y + 10, 3, C_GOOD);     // the one running now
-    const char* name = i < NUM_APPS ? apps[i].name : i == NUM_APPS ? "Check for update" : "Wi-Fi & settings";
-    const char* blurb = i < NUM_APPS ? apps[i].blurb : i == NUM_APPS ? "From GitHub releases" : "Setup hotspot";
+    static const char* ACTIONS[] = {"Check for update", "Wi-Fi & settings", "Power off"};
+    static const char* ACTION_BLURBS[] = {"From GitHub releases", "Setup hotspot", "Top key turns it on"};
+    const char* name  = i < NUM_APPS ? apps[i].name  : ACTIONS[i - NUM_APPS];
+    const char* blurb = i < NUM_APPS ? apps[i].blurb : ACTION_BLURBS[i - NUM_APPS];
     spr.setTextDatum(ML_DATUM);
     spr.setTextFont(2);
     spr.setTextColor(sel ? C_ACC : i < NUM_APPS ? C_TEXT : C_DIM, bg);
@@ -280,7 +329,7 @@ void drawMenu() {
     int h = 147 * ROWS_SHOWN / ITEMS, y = 22 + (147 - h) * menuTop / (ITEMS - ROWS_SHOWN);
     spr.fillRect(317, y, 3, h, C_DIM);
   }
-  spr.pushSprite(0, 0);
+  show();
 }
 
 void openMenu() {
@@ -295,6 +344,7 @@ void menuPress(int pin) {
   menuSince = millis();
   if (pin == BTN_B) { menuPick = (menuPick + 1) % ITEMS; drawMenu(); return; }
   inMenu = false;
+  if (menuPick == NUM_APPS + 2) { powerOff("Powering off"); return; }
   if (menuPick == NUM_APPS + 1) { runPortal(); return; }
   if (menuPick == NUM_APPS) { updater::check(true); startApp(); return; }
   if (menuPick != current) { current = menuPick; saveApp(); }
@@ -303,6 +353,11 @@ void menuPress(int pin) {
 
 // ---------- Main ----------
 void setup() {
+  gpio_hold_dis((gpio_num_t)PIN_POWER_ON);      // held low while it was powered off
+  gpio_hold_dis((gpio_num_t)PIN_LCD_BL);
+  gpio_deep_sleep_hold_dis();
+  bool woke = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+  if (woke) rtc_gpio_deinit((gpio_num_t)BTN_B);  // back to a normal input
   pinMode(PIN_POWER_ON, OUTPUT); digitalWrite(PIN_POWER_ON, HIGH);
   pinMode(BTN_A, INPUT_PULLUP);
   pinMode(BTN_B, INPUT_PULLUP);
@@ -315,7 +370,9 @@ void setup() {
 
   loadSettings();
   applyBrightness();
-  bool forceSetup = digitalRead(BTN_B) == LOW;     // top key held at power-up
+  // Turned on with the top key: wait for it to be let go, so it doesn't count as "hold top".
+  if (woke) { splash("Turning on"); while (digitalRead(BTN_B) == LOW) delay(10); delay(50); }
+  bool forceSetup = !woke && digitalRead(BTN_B) == LOW;     // top key held at power-up
   connectWifi(forceSetup);
   configTzTime(cfg.tz.c_str(), "pool.ntp.org", "time.nist.gov");
 
@@ -338,6 +395,7 @@ void loop() {
     apps[current].run();
     if (updater::tick()) startApp();      // a failed update drew over the app
   }
+  checkBattery();
 
   // Wi-Fi watchdog: a long outage usually means the device was moved, so restart and run
   // the saved / home / phone-setup sequence again.

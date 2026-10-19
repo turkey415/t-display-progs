@@ -173,7 +173,7 @@ void render() {
 
   if (isnan(price)) {
     centered(problem.length() ? problem : "Getting price...", 85);
-    spr.pushSprite(0, 0);
+    show();
     return;
   }
 
@@ -215,7 +215,7 @@ void render() {
     spr.setTextColor(on ? C_BG : C_DIM, on ? C_XRP : C_BG);
     spr.drawString(RANGES[i].label, x + 9, 169);
   }
-  spr.pushSprite(0, 0);
+  show();
 }
 
 // ---------- App ----------
