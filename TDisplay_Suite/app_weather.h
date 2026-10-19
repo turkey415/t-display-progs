@@ -523,16 +523,16 @@ void drawNow() {
   spr.drawString(wxText(wx.code), 6, 88);
 
   if (shellyFresh()) {
-    // Two temperatures side by side: the online air temp and the local well-house sensor.
-    drawIcon(268, 34, 0.75f, wx.code, wx.isDay);
+    // Two big temperatures stacked on the right: the online air temp and the local well-house
+    // sensor, each the size the single temp used to be, with a label to its left.
     float well = cfg.fahrenheit ? shelly.tF : shelly.tC;
-    spr.setTextFont(1);
-    spr.setTextDatum(TC_DATUM);
+    spr.setTextFont(2);
+    spr.setTextDatum(MR_DATUM);
     spr.setTextColor(C_DIM, C_BG);
-    spr.drawString("AIR", 216, 64);
-    spr.drawString("WELL", 288, 64);
-    drawTemp(216, 78, wx.temp, 4, C_TEXT);
-    drawTemp(288, 78, well,    4, C_ACC);
+    spr.drawString("AIR",  206, 46);
+    spr.drawString("WELL", 206, 96);
+    drawTemp(266, 22, wx.temp, 6, C_TEXT);
+    drawTemp(266, 72, well,    6, C_ACC);
   } else {
     drawIcon(268, 44, 1.0f, wx.code, wx.isDay);
     drawTemp(268, 72, wx.temp, 6, C_TEXT);
