@@ -62,6 +62,7 @@ jobs:
         with:
           name: TDisplay_Suite
           path: dist/
+          retention-days: 1
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
