@@ -11,7 +11,8 @@
 // Times are taken on the ESP32's microsecond timer (its 40 MHz crystal), and the NTP exchange
 // runs in its own task so the reply is timestamped the moment it arrives.
 //
-// Pages (tap): 1 the clock, 2 the time sources (like ntpq -p), 3 three clocks side by side:
+// Tap the digits: red / green / dark blue (remembered).
+// Pages (tap anywhere else): 1 the clock, 2 the time sources (like ntpq -p), 3 three clocks side by side:
 // NTP time, the ESP32's own system clock, and the bare crystal left free-running since the
 // first sync, with a graph of how far the crystal has wandered.
 // BOOT: sync again now (a fresh burst to every server).
@@ -338,7 +339,17 @@ int page = 0;
 const int NUM_PAGES = 3;
 uint32_t digitsUs = 1500;                         // how long drawing the digits takes
 
-const uint16_t LED = 0xF800, LED_GHOST = 0x2000;  // red LED digits; ghost survives the 8-bit buffer
+// LED colours: lit, lit while not yet synced, and the unlit-segment glow (each survives the
+// CYD's 8-bit buffer). Tap the digits to change colour; remembered.
+struct LedColor { uint16_t on, dim, ghost; };
+const LedColor LEDS[] = {
+  {0xF800, 0x7800, 0x2000},   // red
+  {0x07E0, 0x03E0, 0x0100},   // green
+  {0x001F, 0x0010, 0x0008},   // dark blue
+};
+const int NUM_LEDS = sizeof(LEDS) / sizeof(LEDS[0]);
+int ledIx = 0;
+const int DIGITS_Y = 26, DIGITS_H = 58;      // where the digits are, for taps
 const uint8_t SEG[] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
 
 // A seven-segment digit with pointed segments, w x h with segment thickness t.
@@ -369,7 +380,8 @@ void bigTime(int64_t us, int y, bool sync) {
   int ms = (us % 1000000) / 1000;
   tm t;
   localtime_r(&sec, &t);
-  uint16_t on = sync ? LED : 0x7800;
+  const LedColor& lc = LEDS[ledIx];
+  const uint16_t on = sync ? lc.on : lc.dim, LED_GHOST = lc.ghost;
   const int W = 31, H = 58, T = 7;
   int v[6] = {t.tm_hour / 10, t.tm_hour % 10, t.tm_min / 10, t.tm_min % 10, t.tm_sec / 10, t.tm_sec % 10};
   int xs[6] = {3, 39, 86, 122, 169, 205};
@@ -470,7 +482,7 @@ void pageClock(const Model& md, const Server* s) {
   int64_t d0 = nowL();
   int64_t lag = digitsUs + pushUs / 4;            // the digits sit in the top quarter
   int64_t tShow = md.synced ? utcAt(md, nowL() + lag) : sysUs + lag;
-  bigTime(tShow, 26, md.synced);
+  bigTime(tShow, DIGITS_Y, md.synced);
   digitsUs = (digitsUs * 7 + (uint32_t)(nowL() - d0)) / 8;
   show(5);
 }
@@ -574,6 +586,10 @@ void pageClocks(const Model& md) {
 
 // ---------- App ----------
 void start() {
+  Preferences p;
+  p.begin("suite", true);
+  ledIx = constrain(p.getInt("pcclr", 0), 0, NUM_LEDS - 1);
+  p.end();
   setFullScreen();
   WiFi.setSleep(false);       // power save holds replies at the access point: uneven delays
   if (!lock) lock = xSemaphoreCreateMutex();
@@ -603,6 +619,18 @@ void run() {
 }
 
 void press(int pin) {
+#ifdef BOARD_CYD
+  // a tap on the digits changes their colour instead of the page
+  if (pin == BTN_B && page == 0 && touch::pressTap && touch::pressY >= DIGITS_Y - 6 && touch::pressY <= DIGITS_Y + DIGITS_H + 6) {
+    ledIx = (ledIx + 1) % NUM_LEDS;
+    Preferences p;
+    p.begin("suite", false);
+    p.putInt("pcclr", ledIx);
+    p.end();
+    redrawNow = true;
+    return;
+  }
+#endif
   if (pin == BTN_B) page = (page + 1) % NUM_PAGES;
   else resync = true;
   redrawNow = true;

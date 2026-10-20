@@ -182,6 +182,11 @@ bool tap(int& px, int& py) {
 }
 
 void forget() { tapped = false; }
+
+// The tap behind this pass's top-key press, if it was one (set by the main loop), so an app's
+// press() can tell where on the screen it landed.
+bool pressTap = false;
+int  pressX = 0, pressY = 0;
 }  // namespace touch
 #endif
 
