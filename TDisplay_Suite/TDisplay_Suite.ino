@@ -425,8 +425,9 @@ void setup() {
   tft.init();
   tft.setRotation(ROT_LANDSCAPE);   // landscape, USB on the left; use 3 to flip
   tft.fillScreen(C_BG);
-  // Made before Wi-Fi starts: on the CYD's classic ESP32 (no PSRAM) a 109 KB block is only
-  // free this early. setPortrait swaps it for one of the same size.
+  // Made before Wi-Fi starts, while memory is in one piece. setPortrait swaps it for one of
+  // the same size.
+  spr.setColorDepth(SPR_DEPTH);
   if (!spr.createSprite(320, 170)) Serial.println("no memory for the screen");
 #ifdef BOARD_CYD
   status::draw(true);

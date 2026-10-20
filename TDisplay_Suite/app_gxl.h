@@ -21,7 +21,7 @@ const Look LOOKS[2] = {
   {"FIREWALL",  "firewall", 0xF9F1 /* #ff3d8b */, 0xFE87 /* #ffd23f */, "IN",     "OUT"},
   {"LAN CACHE", "cache",    0xB35F /* #b26bff */, 0x3FF5 /* #3dffa8 */, "SERVED", "FILL"},
 };
-#define C_GRID 0x18C3
+#define C_GRID FAINT(0x18C3)
 
 struct Totals {
   int    ports;

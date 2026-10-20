@@ -33,7 +33,18 @@
 
 // ---------- Colors (RGB565) ----------
 #define C_BG     0x0000
+// Very dark greys (grid lines, row dividers) go black in the CYD's 8-bit buffer; FAINT(c)
+// keeps c on the T-Display and uses the darkest grey that survives on the CYD.
+#ifdef BOARD_CYD
+#define FAINT(c) 0x2108
+#else
+#define FAINT(c) (c)
+#endif
+#ifdef BOARD_CYD
+#define C_HDR    0x2108   // the CYD's 8-bit screen buffer turns 0x18E3 black; this stays a dark blue-grey
+#else
 #define C_HDR    0x18E3
+#endif
 #define C_TEXT   0xFFFF
 #define C_DIM    0x8410
 #define C_ACC    0x5DDF
@@ -44,6 +55,14 @@
 
 TFT_eSPI    tft;
 TFT_eSprite spr(&tft);
+// The screen buffer's colour depth. The CYD's classic ESP32 has no PSRAM: a 16-bit 320x170
+// buffer (109 KB) leaves too little memory for HTTPS (Coinbase, GitHub updates), so it uses
+// 8-bit colour (RGB332, 54 KB). Colours are rounded a little; very dark ones go black.
+#ifdef BOARD_CYD
+#define SPR_DEPTH 8
+#else
+#define SPR_DEPTH 16
+#endif
 
 // ---------- Settings (set from the Wi-Fi setup page, kept in flash) ----------
 struct Settings {
@@ -212,6 +231,7 @@ void setPortrait(bool p) {
   tft.setRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
   tft.fillScreen(C_BG);
   spr.deleteSprite();          // the same size either way, so the memory is reused at once
+  spr.setColorDepth(SPR_DEPTH);
   spr.createSprite(p ? 170 : 320, p ? 320 : 170);
 #ifdef BOARD_CYD
   status::draw(true);

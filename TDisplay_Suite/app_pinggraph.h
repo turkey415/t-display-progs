@@ -99,7 +99,7 @@ void render() {
   spr.setTextFont(1); spr.setTextDatum(ML_DATUM); spr.setTextColor(C_DIM, C_BG);
   for (int g = 0; g <= 2; g++) {
     int y = GBOT - g * GH / 2;
-    spr.drawFastHLine(0, y, W, 0x1082);
+    spr.drawFastHLine(0, y, W, FAINT(0x1082));
     spr.drawString(String((int)(top * g / 2)) + "ms", 2, y - 5);
   }
   int spikeY = GBOT - (int)(constrain(spikeAt / top, 0.f, 1.f) * GH);
