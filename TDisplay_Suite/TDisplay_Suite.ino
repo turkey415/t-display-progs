@@ -470,6 +470,7 @@ void loop() {
 #ifdef BOARD_CYD
   int tx, ty;
   bool tapped = touch::tap(tx, ty);
+  touch::pressTap = tapped; touch::pressX = tx; touch::pressY = ty;
 #endif
   if (inMenu) {
 #ifdef BOARD_CYD
