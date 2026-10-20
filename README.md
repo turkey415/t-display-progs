@@ -1,6 +1,6 @@
 # t-display-progs
 
-Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen).
+Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen). The suite also runs on the **Freenove 2.8" ESP32 Display** ("CYD", FNK0103B); see [On the CYD](#on-the-freenove-28-cyd).
 
 ## TDisplay_Suite: one firmware, all the apps
 
@@ -62,6 +62,22 @@ The board has no power switch: the battery is wired straight to the charger. **P
 
 The menu also has **Check for update** and **Wi-Fi & settings**.
 
+### On the Freenove 2.8" CYD
+
+The same firmware, built with `tools/build.sh cyd` (FNK0103B: classic ESP32, 240×320 ST7789 TN, resistive touch, 4 MB flash, no PSRAM). The apps keep their 320×170 layout at the top of the screen and the spare 70 pixels show a **status bar**: clock and date, Wi-Fi signal, network name and IP, battery or USB. Portrait apps put it in a column on the right.
+
+The CYD's only readable button is BOOT (the other is RESET), so the touchscreen stands in for the top key:
+
+| Do this | Same as on the T-Display |
+| --- | --- |
+| Tap anywhere on the screen | Press top |
+| Hold the screen | Hold top (Wi-Fi & settings hotspot, also at power-on) |
+| Press BOOT | Press bottom |
+| Hold BOOT | Hold bottom (app menu). In the menu you can also tap a row to open it. |
+| Tap while powered off | Turns it back on |
+
+Differences: the setup hotspot is **CYD-Setup**, the Wireless Sniffer has no Bluetooth view (Bluetooth doesn't fit beside Wi-Fi on the classic ESP32), and it updates from `CYD_Suite.bin` in the same releases.
+
 ## Updates over Wi-Fi
 
 Devices update themselves from this repo's [releases](https://github.com/turkey415/t-display-progs/releases). At power-on and once a day each one reads `version.txt` from the latest release and, if it is newer than what it runs, downloads `TDisplay_Suite.bin`, installs it and restarts. You see a progress bar while it does. Settings and Wi-Fi are kept. **Check for update** in the menu does the same at any time. Turn the automatic check off on the setup page if you'd rather update by hand.
@@ -70,7 +86,7 @@ To publish a new version:
 
 1. Change `FW_VERSION` in `TDisplay_Suite/version.h` (e.g. `1.2.0`) and merge.
 2. Push the tag on main: `git tag v1.2.0 && git push origin v1.2.0`.
-3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
+3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `CYD_Suite.bin`, `CYD_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
 
 Every pull request gets a build too, with the files attached to the run.
 
@@ -104,6 +120,8 @@ arduino-cli compile --upload -p /dev/ttyACM0 \
   --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB \
   TDisplay_Suite
 ```
+
+Or `tools/build.sh s3` / `tools/build.sh cyd` (add a port to flash, `-` to only build). The CYD build sets TFT_eSPI up from `tools/cyd_flags.txt`, so `User_Setup_Select.h` can stay on the T-Display setup.
 
 On Windows the port is a `COM` number. If upload won't start, hold BOOT, tap RST, let go of BOOT, and try again.
 

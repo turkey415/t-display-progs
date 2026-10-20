@@ -12,6 +12,11 @@
 namespace updater {
 
 const char* RELEASES = "https://github.com/turkey415/t-display-progs/releases/latest/download/";
+#ifdef BOARD_CYD
+const char* BIN_NAME = "CYD_Suite.bin";        // the CYD has its own build in each release
+#else
+const char* BIN_NAME = "TDisplay_Suite.bin";
+#endif
 const uint32_t EVERY_MS = 24UL * 60UL * 60UL * 1000UL;
 
 uint32_t lastCheck = 0;
@@ -81,7 +86,7 @@ void check(bool shown) {
   httpUpdate.rebootOnUpdate(true);
   WiFiClientSecure client;
   client.setInsecure();
-  t_httpUpdate_return r = httpUpdate.update(client, String(RELEASES) + "TDisplay_Suite.bin");
+  t_httpUpdate_return r = httpUpdate.update(client, String(RELEASES) + BIN_NAME);
   // Only comes back if it failed; on success the device has restarted into the new version.
   String why = r == HTTP_UPDATE_NO_UPDATES ? "No update file" : httpUpdate.getLastErrorString();
   Serial.printf("update failed: %s\n", why.c_str());

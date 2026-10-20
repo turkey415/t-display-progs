@@ -38,7 +38,7 @@ void resetStats() {
 
 // Pull the targets from the Sentinel list; gateway first, skip bare "GW" duplicates.
 void buildTargets() {
-  String list = cfg.hosts.length() ? cfg.hosts : String("Gateway=GW,Internet=1.1.1.1");
+  String list = cfg.hosts.length() ? cfg.hosts : String(sentinel::DEFAULT_HOSTS);   // same list as LAN Sentinel
   if (list == builtFrom && numTgts) return;
   builtFrom = list;
   numTgts = 0;
@@ -54,6 +54,7 @@ void buildTargets() {
     String tg = eq < 0 ? item : item.substring(eq + 1);
     label.trim(); tg.trim();
     if (!tg.length() || tg.equalsIgnoreCase("GW")) continue;
+    if (numTgts >= (int)(sizeof tgts / sizeof tgts[0])) break;
     tgts[numTgts++] = {label, tg};
   }
 }

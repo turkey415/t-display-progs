@@ -189,7 +189,7 @@ void render() {
   if (!cfg.server.length() || !cfg.key.length()) {
     centered("Set the GXL server", 60, 4, C_TEXT);
     centered("and agent key", 88, 4, C_TEXT);
-    centered("Hold the top key for Wi-Fi setup", 130, 2);
+    centered(HINT_SETUP, 130, 2);
   } else if (!everOk) {
     centered(problem.length() ? problem : "Connecting to server", 70, 4);
     centered(cfg.server, 110, 2);
