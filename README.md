@@ -20,6 +20,7 @@ Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen). The s
 | **Ping Graph** | A scrolling latency graph to one target, pinging about twice a second, with the current, average and jitter figures, loss percentage, and a count of spikes over the threshold. The top key steps through the LAN Sentinel targets (gateway first), so the game or GXL server is one tap away. |
 | **DHCP Finder** | Broadcasts a DHCP request and lists every server that answers, with its address, MAC, and the address and gateway it offered. One server is normal; a second turns the screen red (a rogue DHCP server, usually someone's home router). It only asks and listens; it never takes an address or changes the device's own networking. |
 | **LAN Scanner** | Sweeps the subnet by ARP and lists every device that answers, with its IP, MAC and maker (from the MAC), flagging ones that appear after the first sweep. Local subnet only (/24 around the device's own IP). Sends only ARP requests. |
+| **Precision Clock** *(CYD only)* | A full-screen lab clock in red LED digits to the millisecond, kept by its own NTP client: six servers (Cloudflare, Google, Apple, NIST, pool.ntp.org, the gateway) polled every 64 s, the shortest-round-trip sample per server, Marzullo's algorithm to drop servers that disagree, and a weighted average of the rest. It learns the board crystal's drift (ppm and s/day) from 30 minutes of offsets so the time runs smoothly between samples, and shows the honest error bound (±) NTP computes. Also UTC, Unix time, MJD, day of year and ISO week. Tap: the clock → a source table like `ntpq -p` (reach, offset, delay, jitter, which server is in use or rejected) → three clocks side by side (NTP, the ESP32's own SNTP clock, and the bare crystal left free-running since the first sync) with a graph of the crystal's wander. BOOT: sync again now. |
 
 ### Wi-Fi and settings
 
@@ -75,6 +76,8 @@ The CYD's only readable button is BOOT (the other is RESET), so the touchscreen 
 | Press BOOT | Press bottom |
 | Hold BOOT | Hold bottom (app menu). In the menu you can also tap a row to open it. |
 | Tap while powered off | Turns it back on |
+
+In the **mDNS Browser** (portrait), tap the status column and it slides off to the right so the list widens to 240 px; tap the right edge to bring it back. The CYD also has the **Precision Clock**, which uses the whole screen.
 
 Differences: the setup hotspot is **CYD-Setup**, the Wireless Sniffer has no Bluetooth view (Bluetooth doesn't fit beside Wi-Fi on the classic ESP32), and it updates from `CYD_Suite.bin` in the same releases.
 
