@@ -221,12 +221,61 @@ Press poll(Button& b) {
   return NONE;
 }
 
+// Set by the main loop for one pass after something outside the app (the CYD's status bar
+// sliding away) uncovered or resized its screen: apps that redraw on a timer redraw at once.
+bool redrawNow = false;
+
 #ifdef BOARD_CYD
+// Apps draw on a "canvas": 320x170 (landscape) or 170x320 (portrait), the size of the screen
+// buffer. An app can ask for more of the CYD's 320x240:
+//   setFullScreen() : the whole 320x240, no status bar (Precision Clock)
+//   allowWide()     : in portrait, a tap on the status bar slides it away and the canvas
+//                     widens to 240 (mDNS Browser); a tap on the right edge brings it back
+// A buffer for the whole screen (77 KB) leaves too little memory for HTTPS, so a bigger canvas
+// is drawn in two strips: frame() runs the app's drawing twice, shifted, and show() sends each
+// strip to its place. Apps just draw in canvas coordinates; anything off the strip is clipped.
+bool fullScreen = false, wideOK = false, statusHidden = false;
+int  canvasW = 320, canvasH = 170;
+int  band = 0;                         // which strip frame() is drawing
 namespace status { void draw(bool full); }
+
+void applyLayout() {
+  int cw = portrait ? (wideOK && statusHidden ? 240 : 170) : 320;
+  int ch = portrait ? 320 : (fullScreen ? 240 : 170);
+  if (cw == canvasW && ch == canvasH) return;
+  canvasW = cw; canvasH = ch;
+  status::draw(true);                   // covers whatever the canvas gave up
+}
+
+void setFullScreen() { fullScreen = true; applyLayout(); }
+void allowWide()     { wideOK = true;     applyLayout(); }
+int  canvasWidth()   { return canvasW; }
+int  canvasHeight()  { return canvasH; }
+
+// Draws a frame with draw(), which ends with show(), in one or two strips.
+void frame(void (*draw)()) {
+  int bands = canvasW > spr.width() || canvasH > spr.height() ? 2 : 1;
+  for (band = 0; band < bands; band++) {
+    if (portrait) spr.setOrigin(-170 * band, 0); else spr.setOrigin(0, -170 * band);
+    draw();
+  }
+  band = 0;
+  spr.setOrigin(0, 0);
+}
+#else
+void setFullScreen() {}
+void allowWide() {}
+int  canvasWidth()  { return spr.width(); }
+int  canvasHeight() { return spr.height(); }
+void frame(void (*draw)()) { draw(); }
 #endif
 
 void setPortrait(bool p) {
+#ifdef BOARD_CYD
+  if (p == portrait) { applyLayout(); return; }
+#else
   if (p == portrait) return;
+#endif
   portrait = p;
   tft.setRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
   tft.fillScreen(C_BG);
@@ -234,7 +283,8 @@ void setPortrait(bool p) {
   spr.setColorDepth(SPR_DEPTH);
   spr.createSprite(p ? 170 : 320, p ? 320 : 170);
 #ifdef BOARD_CYD
-  status::draw(true);
+  canvasW = canvasH = 0;
+  applyLayout();
 #endif
 }
 
@@ -333,10 +383,10 @@ int batteryPct() {
 // USB. It is BADGE_W wide; header() keeps its right-hand text clear of it.
 const int BADGE_W = 52;
 
-int hdrRight() { return spr.width() - BADGE_W - 4; }
+int hdrRight() { return canvasWidth() - BADGE_W - 4; }
 
 void drawBattery(int y = 5) {
-  int x = spr.width() - 23;                    // the battery body: 18 x 10, nub on the right
+  int x = canvasWidth() - 23;                    // the battery body: 18 x 10, nub on the right
   bool usb = onUSB();
   int pct = batteryPct();
   uint16_t c = usb ? C_GOOD : pct > 50 ? C_GOOD : pct > 20 ? C_WARN : C_BAD;
@@ -357,9 +407,20 @@ void drawBattery(int y = 5) {
 
 // Every screen goes out through here, so the battery shows everywhere.
 // Big Clock's digits fill the top, so it asks for the badge lower down.
+uint32_t pushUs = 0;             // how long the last frame (its first strip) took to reach the screen
+
 void show(int batteryY = 5) {
   drawBattery(batteryY);
+  int64_t t0 = esp_timer_get_time();
+#ifdef BOARD_CYD
+  if (band == 0)     spr.pushSprite(0, 0);
+  else if (portrait) spr.pushSprite(170, 0, 0, 0, canvasW - 170, 320);   // the right-hand strip
+  else               spr.pushSprite(0, 170, 0, 0, 320, canvasH - 170);   // the bottom strip
+  if (band == 0) pushUs = esp_timer_get_time() - t0;
+#else
   spr.pushSprite(0, 0);
+  pushUs = esp_timer_get_time() - t0;
+#endif
 }
 
 // ---------- Helpers ----------
@@ -367,7 +428,7 @@ String fit(String s, int w, int font);
 
 void header(const String& left, const String& right, uint16_t leftCol = C_ACC, uint16_t rightCol = C_DIM) {
   int lx = portrait ? 4 : 6;
-  spr.fillRect(0, 0, spr.width(), 20, C_HDR);
+  spr.fillRect(0, 0, canvasWidth(), 20, C_HDR);
   spr.setTextFont(2);
   spr.setTextColor(leftCol, C_HDR);
   spr.setTextDatum(TL_DATUM);
@@ -382,7 +443,7 @@ void centered(const String& msg, int y, int font = 4, uint16_t col = C_DIM) {
   spr.setTextFont(font);
   spr.setTextDatum(MC_DATUM);
   spr.setTextColor(col, C_BG);
-  spr.drawString(msg, spr.width() / 2, y);
+  spr.drawString(msg, canvasWidth() / 2, y);
 }
 
 // Cuts a string with ".." so it fits in w pixels in the given font.
@@ -497,17 +558,49 @@ uint16_t batColor() {
   return onUSB() ? C_DIM : p > 50 ? C_GOOD : p > 20 ? C_WARN : C_BAD;
 }
 
+bool visible() { return !fullScreen && !(portrait && wideOK && statusHidden); }
+
+void paint(bool full);
+
 void draw(bool full) {
   static uint32_t last = 0;
+  if (!visible()) return;
   if (!full && millis() - last < 1000) return;
   last = millis();
+  paint(full);
+}
+
+// Is (x, y) a tap that should slide the status bar away or back?
+bool isToggleTap(int x, int y) {
+  if (!portrait || !wideOK) return false;
+  return statusHidden ? x >= 240 - 30 : x >= 170;
+}
+
+// Slides the portrait status column off to the right (or back in), then resizes the canvas.
+void toggle() {
+  bool away = !statusHidden;
+  for (int s = 0; s <= 70; s += 10) {
+    int off = away ? s : 70 - s;
+    tft.setViewport(170, 0, 70, 320, false);   // clip to the column
+    tft.setOrigin(off, 0);                      // ...and draw it shifted right
+    paint(true);
+    tft.resetViewport();
+    if (off) tft.fillRect(170, 0, off, 320, C_BG);
+    delay(15);
+  }
+  statusHidden = away;
+  applyLayout();
+  redrawNow = true;
+}
+
+void paint(bool full) {
   time_t now = time(nullptr);
   tm t;
   localtime_r(&now, &t);
   bool synced = now > 1700000000;
   bool up = wifiUp();
   int rssi = up ? WiFi.RSSI() : 0;
-  char date[16];
+  char date[24];
   strftime(date, sizeof date, "%a %b %e", &t);
 
   if (!portrait) {

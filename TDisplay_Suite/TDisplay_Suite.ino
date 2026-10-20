@@ -47,6 +47,9 @@
 #include "app_pinggraph.h"
 #include "app_dhcp.h"
 #include "app_lanscan.h"
+#ifdef BOARD_CYD
+#include "app_preclock.h"
+#endif
 #include "updater.h"
 
 #if __has_include("secrets.h")
@@ -97,6 +100,9 @@ App apps[] = {
   {"Ping Graph",      "Latency + jitter graph",   pinggraph::start, pinggraph::run, pinggraph::press},
   {"DHCP Finder",     "Find rogue DHCP servers",  dhcpfinder::start, dhcpfinder::run, dhcpfinder::press},
   {"LAN Scanner",     "Devices on the subnet",    lanscan::start,   lanscan::run,   lanscan::press},
+#ifdef BOARD_CYD
+  {"Precision Clock", "NTP to the ms, drift",     preclock::start,  preclock::run,  preclock::press},
+#endif
 };
 const int NUM_APPS = sizeof(apps) / sizeof(apps[0]);
 int current = 0;                // index of the running app
@@ -107,6 +113,9 @@ Button btnA = {BTN_A}, btnB = {BTN_B};
 
 // Every app starts in landscape; the ones that want portrait turn the screen in start().
 void startApp() {
+#ifdef BOARD_CYD
+  fullScreen = wideOK = false;          // each app asks again in start()
+#endif
   setPortrait(false);
   apps[current].start();
 }
@@ -382,6 +391,9 @@ void drawMenu() {
 }
 
 void openMenu() {
+#ifdef BOARD_CYD
+  fullScreen = wideOK = false;
+#endif
   setPortrait(false);
   inMenu = true;
 #ifdef BOARD_CYD
@@ -430,11 +442,13 @@ void setup() {
   spr.setColorDepth(SPR_DEPTH);
   if (!spr.createSprite(320, 170)) Serial.println("no memory for the screen");
 #ifdef BOARD_CYD
-  status::draw(true);
   Serial.printf("heap after screen: %u free, %u largest\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #endif
 
   loadSettings();
+#ifdef START_APP
+  current = constrain(START_APP, 0, NUM_APPS - 1);   // test builds: -DSTART_APP=<index in apps[]>
+#endif
   applyBrightness();
   // Turned on with the top key: wait for it to be let go, so it doesn't count as "hold top".
   // On the CYD a tap wakes it, so wait for any touch to end too.
@@ -453,11 +467,14 @@ void setup() {
 void loop() {
   Press a = poll(btnA), b = poll(btnB);
 
+#ifdef BOARD_CYD
+  int tx, ty;
+  bool tapped = touch::tap(tx, ty);
+#endif
   if (inMenu) {
 #ifdef BOARD_CYD
     // A tap on a row opens it; a tap anywhere else (the status bar) moves down like NEXT.
-    int tx, ty;
-    if (touch::tap(tx, ty) && ty >= 22 && ty < 22 + ROWS_SHOWN * ROW_H && menuTop + (ty - 22) / ROW_H < ITEMS) {
+    if (tapped && ty >= 22 && ty < 22 + ROWS_SHOWN * ROW_H && menuTop + (ty - 22) / ROW_H < ITEMS) {
       menuPick = menuTop + (ty - 22) / ROW_H;
       drawMenu();
       delay(120);
@@ -469,11 +486,15 @@ void loop() {
     if (b == SHORT) menuPress(BTN_B);
     if (inMenu && millis() - menuSince > MENU_IDLE_MS) { inMenu = false; startApp(); }
   } else {
+#ifdef BOARD_CYD
+    if (tapped && b == SHORT && status::isToggleTap(tx, ty)) { status::toggle(); b = NONE; }
+#endif
     if (a == LONG)  { openMenu(); return; }
     if (b == LONG)  { runPortal(); return; }
     if (a == SHORT) apps[current].press(BTN_A);
     if (b == SHORT) apps[current].press(BTN_B);
     apps[current].run();
+    redrawNow = false;
     if (updater::tick()) startApp();      // a failed update drew over the app
   }
   checkBattery();

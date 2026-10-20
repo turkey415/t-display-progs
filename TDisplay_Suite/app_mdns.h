@@ -8,6 +8,7 @@
 //
 // Portrait (USB at the bottom) for a long list.
 // Keys: BTN_B next page, BTN_A scan again now.
+// On the CYD a tap on the status column slides it away and the list widens to 240 px.
 #pragma once
 #include "mdns.h"
 
@@ -118,6 +119,7 @@ void pump() {
 }
 
 void render() {
+  const int W = canvasWidth();     // 170, or 240 on the CYD with the status bar slid away
   spr.fillSprite(C_BG);
   header("mDNS", String(numHits) + (sweeps ? "" : " ~"), C_ACC, C_TEXT);
 
@@ -129,7 +131,7 @@ void render() {
     } else {
       centered("Listening...", 150, 2);
     }
-    spr.drawFastHLine(0, 305, 170, C_HDR);
+    spr.drawFastHLine(0, 305, W, C_HDR);
     spr.setTextFont(1); spr.setTextColor(C_DIM, C_BG); spr.setTextDatum(BL_DATUM);
     spr.drawString(wifiUp() ? WiFi.localIP().toString() : String("Wi-Fi down"), 3, 318);
     show();
@@ -149,36 +151,37 @@ void render() {
     spr.drawString(fit(h.label, 72, 1), 3, y + 1);          // service type, top line
     spr.setTextColor(C_DIM, C_BG);
     spr.setTextDatum(TR_DATUM);
-    if (h.host[0]) spr.drawString(fit(String(h.host) + (h.port ? ":" + String(h.port) : ""), 92, 1), 168, y + 1);
+    if (h.host[0]) spr.drawString(fit(String(h.host) + (h.port ? ":" + String(h.port) : ""), W - 78, 1), W - 2, y + 1);
     spr.setTextFont(2);
     spr.setTextDatum(ML_DATUM);
     spr.setTextColor(C_TEXT, C_BG);
-    spr.drawString(fit(h.name, 165, 2), 3, y + 12);          // device name, bottom line
-    spr.drawFastHLine(0, y + ROW_H - 1, 170, FAINT(0x1082));
+    spr.drawString(fit(h.name, W - 5, 2), 3, y + 12);          // device name, bottom line
+    spr.drawFastHLine(0, y + ROW_H - 1, W, FAINT(0x1082));
   }
 
-  spr.drawFastHLine(0, 305, 170, C_HDR);
+  spr.drawFastHLine(0, 305, W, C_HDR);
   spr.setTextFont(1);
   spr.setTextColor(C_DIM, C_BG);
   spr.setTextDatum(BL_DATUM);
   spr.drawString(sweeps ? "scan " + String(sweeps) : "scanning...", 3, 318);
   spr.setTextDatum(BR_DATUM);
-  spr.drawString(String(min(pageNo, pages - 1) + 1) + "/" + String(pages), 167, 318);
+  spr.drawString(String(min(pageNo, pages - 1) + 1) + "/" + String(pages), W - 3, 318);
   show();
 }
 
 void start() {
   setPortrait(true);
+  allowWide();                     // CYD: tap the status bar to slide it away
   pageNo = 0;
   if (!mdnsReady) { mdnsReady = (mdns_init() == ESP_OK); }
   started = true;
-  render();
+  frame(render);
 }
 
 void run() {
   pump();
   static uint32_t lastDraw = 0;
-  if (millis() - lastDraw > 400) { lastDraw = millis(); render(); }
+  if (redrawNow || millis() - lastDraw > 400) { lastDraw = millis(); frame(render); }
 }
 
 void press(int pin) {
@@ -188,7 +191,7 @@ void press(int pin) {
     numHits = 0; sweeps = 0; svcIdx = 0;      // fresh scan
     if (search) { mdns_query_async_delete(search); search = nullptr; }
   }
-  render();
+  frame(render);
 }
 
 }  // namespace mdnsbrowser
