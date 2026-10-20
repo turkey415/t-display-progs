@@ -21,7 +21,7 @@ const Look LOOKS[2] = {
   {"FIREWALL",  "firewall", 0xF9F1 /* #ff3d8b */, 0xFE87 /* #ffd23f */, "IN",     "OUT"},
   {"LAN CACHE", "cache",    0xB35F /* #b26bff */, 0x3FF5 /* #3dffa8 */, "SERVED", "FILL"},
 };
-#define C_GRID 0x18C3
+#define C_GRID FAINT(0x18C3)
 
 struct Totals {
   int    ports;
@@ -189,7 +189,7 @@ void render() {
   if (!cfg.server.length() || !cfg.key.length()) {
     centered("Set the GXL server", 60, 4, C_TEXT);
     centered("and agent key", 88, 4, C_TEXT);
-    centered("Hold the top key for Wi-Fi setup", 130, 2);
+    centered(HINT_SETUP, 130, 2);
   } else if (!everOk) {
     centered(problem.length() ? problem : "Connecting to server", 70, 4);
     centered(cfg.server, 110, 2);

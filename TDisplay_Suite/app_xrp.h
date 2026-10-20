@@ -49,6 +49,10 @@ bool get(const String& path, JsonDocument& doc) {
   http.setUserAgent("TDisplaySuite (github.com/turkey415/t-display-progs)");
   int code = http.GET();
   if (code != 200) {
+    char tls[80] = "";
+    client.lastError(tls, sizeof tls);
+    Serial.printf("xrp: GET %s -> %d (%s) tls: %s  heap %u free, %u largest\n", path.c_str(), code,
+                  http.errorToString(code).c_str(), tls, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     problem = code < 0 ? "Can't reach Coinbase" : "Coinbase said HTTP " + String(code);
     http.end();
     return false;
@@ -116,7 +120,7 @@ void arrow(int x, int y, bool up, uint16_t c) {
 
 void chart(int top, int h) {
   int bottom = top + h - 1;
-  for (int i = 1; i < 4; i++) spr.drawFastHLine(0, top + i * h / 4, 320, 0x10A2);
+  for (int i = 1; i < 4; i++) spr.drawFastHLine(0, top + i * h / 4, 320, FAINT(0x10A2));
   if (n < 2 || chartRange != range) { centered("Loading chart...", top + h / 2, 2); return; }
 
   float lo = closes[0], hi = closes[0];

@@ -2,6 +2,7 @@
 # also publishes a release with the files the devices update from:
 #   TDisplay_Suite.bin       the app, for updates over Wi-Fi
 #   TDisplay_Suite-full.bin  everything at offset 0, for a first flash over USB
+#   CYD_Suite.bin, CYD_Suite-full.bin   the same two for the Freenove 2.8" CYD
 #   version.txt              the version, which devices compare with their own
 name: Build
 
@@ -16,6 +17,7 @@ permissions:
 
 env:
   FQBN: esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB
+  FQBN_CYD: esp32:esp32:esp32:PartitionScheme=min_spiffs
 
 jobs:
   build:
@@ -55,6 +57,11 @@ jobs:
           mkdir dist
           cp build/TDisplay_Suite.ino.bin dist/TDisplay_Suite.bin
           cp build/TDisplay_Suite.ino.merged.bin dist/TDisplay_Suite-full.bin
+          # The Freenove 2.8" CYD build: TFT_eSPI is set up from tools/cyd_flags.txt instead.
+          arduino-cli compile --fqbn "$FQBN_CYD" --output-dir build-cyd \
+            --build-property "compiler.cpp.extra_flags=$(cat tools/cyd_flags.txt)" TDisplay_Suite
+          cp build-cyd/TDisplay_Suite.ino.bin dist/CYD_Suite.bin
+          cp build-cyd/TDisplay_Suite.ino.merged.bin dist/CYD_Suite-full.bin
           sed -n 's/#define FW_VERSION "\(.*\)"/\1/p' TDisplay_Suite/version.h > dist/version.txt
           ls -l dist
 

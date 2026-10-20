@@ -18,11 +18,16 @@
     hold bottom      : app menu (top = next, bottom = pick)
     hold top         : Wi-Fi & settings hotspot
     hold top at power-on : Wi-Fi & settings hotspot
-    menu > Power off : deep sleep (screen and Wi-Fi off); the top key or RST turns it back on
+    menu > Power off : deep sleep (screen and Wi-Fi off); the top key (CYD: a tap) or RST turns it back on
     short presses    : up to the app (usually top = next page, bottom = refresh)
 
   Libraries: TFT_eSPI (Setup206_LilyGo_T_Display_S3 selected), ArduinoJson 7,
              WiFiManager (tzapu), ESP32Ping
+
+  The same firmware also builds for the Freenove 2.8" CYD (tools/build.sh cyd). There a tap
+  anywhere on the screen is the top key (hold = hold top), the BOOT button is the bottom key,
+  menu rows can be tapped, a status bar fills the spare 70 pixels, the hotspot is "CYD-Setup",
+  and a tap wakes it from power off.
 */
 
 #include <WiFiManager.h>
@@ -67,7 +72,13 @@
 #define DEFAULT_SHELLY ""
 #endif
 
+#ifdef BOARD_CYD
+const char* AP_NAME = "CYD-Setup";
+#define PORTAL_TITLE "CYD Suite v" FW_VERSION
+#else
 const char* AP_NAME = "TDisplay-Setup";
+#define PORTAL_TITLE "T-Display v" FW_VERSION
+#endif
 const char* DEFAULT_TZ = "CST6CDT,M3.2.0,M11.1.0";      // US Central with DST
 const uint32_t WIFI_LOST_MS = 2UL * 60UL * 1000UL;
 const uint32_t PORTAL_SECS  = 300;
@@ -179,7 +190,7 @@ void saveParams() {
 // ---------- Wi-Fi ----------
 void splash(const String& msg) {
   spr.fillSprite(C_BG);
-  centered("T-DISPLAY SUITE", 58, 4, C_TEXT);
+  centered(BOARD_NAME, 58, 4, C_TEXT);
   centered(apps[current].name, 86, 2, C_ACC);
   centered(msg, 112, 2);
   centered("v" FW_VERSION, 150, 1);
@@ -231,7 +242,7 @@ void runPortal() {
 
   std::vector<const char*> menu = {"wifi", "param", "info", "update", "restart"};   // update: upload a .bin
   wm.setMenu(menu);
-  wm.setTitle("T-Display v" FW_VERSION);
+  wm.setTitle(PORTAL_TITLE);
   wm.setSaveParamsCallback(saveParams);
   wm.setBreakAfterConfig(true);
   wm.setConfigPortalTimeout(PORTAL_SECS);
@@ -241,16 +252,23 @@ void runPortal() {
 }
 
 void connectWifi(bool forceSetup) {
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {    // why a join failed, for the serial log
+    Serial.printf("wifi: disconnected, reason %d\n", info.wifi_sta_disconnected.reason);
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
 
   if (!forceSetup) {
     bool saved = wm.getWiFiIsSaved();
     if (saved) {
+      Serial.printf("wifi: trying saved network %s\n", wm.getWiFiSSID(true).c_str());
       WiFi.begin();
       if (waitConnect("Joining " + wm.getWiFiSSID(true), 15000)) return;
+      WiFi.disconnect();       // stop trying it, or the next WiFi.begin is refused
+      delay(200);
     }
     if (strlen(HOME_SSID)) {
+      Serial.printf("wifi: trying home network %s\n", HOME_SSID);
       // Kept in flash only when no phone-set network is, so a phone-set one is never replaced
       // and an update without secrets.h still knows the home network.
       WiFi.persistent(!saved);
@@ -267,15 +285,16 @@ void connectWifi(bool forceSetup) {
 // ---------- Power ----------
 // The board has no power switch (the battery is wired straight to the charger), so "off" is
 // deep sleep: screen, backlight and radio off, a tiny trickle of current. The top key wakes
-// it (not the bottom one: that is the BOOT key). Unplug the battery for a true off.
+// it (not the bottom one: that is the BOOT key); on the CYD a tap on the screen does.
+// Unplug the battery for a true off.
 void powerOff(const char* why) {
   setPortrait(false);
   spr.fillSprite(C_BG);
   centered(why, 62, 4, C_TEXT);
-  centered("Press the TOP key to turn on", 100, 2, C_DIM);
+  centered(HINT_WAKE, 100, 2, C_DIM);
   show();
   delay(2000);
-  while (digitalRead(BTN_A) == LOW || digitalRead(BTN_B) == LOW) delay(10);   // let go first
+  while (keyDown(BTN_A) || keyDown(BTN_B)) delay(10);   // let go first
   delay(50);
 
   WiFi.disconnect(true);
@@ -284,14 +303,21 @@ void powerOff(const char* why) {
   tft.writecommand(0x10);            // display sleep
   ledcDetach(PIN_LCD_BL);
   pinMode(PIN_LCD_BL, OUTPUT);   digitalWrite(PIN_LCD_BL, LOW);
+  gpio_hold_en((gpio_num_t)PIN_LCD_BL);     // keep it low while asleep
+#ifdef BOARD_CYD
+  // The touch chip pulls its IRQ pin low when touched; GPIO36 is input-only and has a
+  // pull-up on the board, so it wakes the ESP32 straight from it.
+  gpio_deep_sleep_hold_en();
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_TOUCH_IRQ, 0);
+#else
   pinMode(PIN_POWER_ON, OUTPUT); digitalWrite(PIN_POWER_ON, LOW);   // LCD power off
-  gpio_hold_en((gpio_num_t)PIN_LCD_BL);     // keep both low while asleep
   gpio_hold_en((gpio_num_t)PIN_POWER_ON);
   gpio_deep_sleep_hold_en();
 
   rtc_gpio_pullup_en((gpio_num_t)BTN_B);
   rtc_gpio_pulldown_dis((gpio_num_t)BTN_B);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_B, 0);
+#endif
   esp_deep_sleep_start();
 }
 
@@ -302,7 +328,7 @@ void checkBattery() {
   if (millis() - lastLog > 10000) {
     lastLog = millis();
     Serial.printf("battery %.2f V  avg %.2f V  %d%%  %s%s%s\n", batV, slowV, batteryPct(),
-                  onUSB() ? "USB" : "", HWCDC::isPlugged() ? " (computer)" : "",
+                  onUSB() ? "USB" : "", computerPlugged() ? " (computer)" : "",
                   charging ? " (charging)" : "");
   }
   if (onUSB() || batV > BAT_EMPTY_V || millis() < 60000) { lowSince = 0; return; }
@@ -315,6 +341,11 @@ void checkBattery() {
 const int ROW_H = 21, ROWS_SHOWN = 7;
 const int ITEMS = NUM_APPS + 3;      // + "Check for update", "Wi-Fi & settings", "Power off"
 bool inMenu = false;
+#ifdef BOARD_CYD
+#define BOARD_WAKE_BLURB "A tap turns it on"
+#else
+#define BOARD_WAKE_BLURB "Top key turns it on"
+#endif
 int  menuPick = 0, menuTop = 0;
 uint32_t menuSince = 0;
 
@@ -331,7 +362,7 @@ void drawMenu() {
     if (sel) spr.fillRoundRect(2, y, 312, ROW_H - 1, 4, C_HDR);
     if (i == current) spr.fillCircle(10, y + 10, 3, C_GOOD);     // the one running now
     static const char* ACTIONS[] = {"Check for update", "Wi-Fi & settings", "Power off"};
-    static const char* ACTION_BLURBS[] = {"From GitHub releases", "Setup hotspot", "Top key turns it on"};
+    static const char* ACTION_BLURBS[] = {"From GitHub releases", "Setup hotspot", BOARD_WAKE_BLURB};
     const char* name  = i < NUM_APPS ? apps[i].name  : ACTIONS[i - NUM_APPS];
     const char* blurb = i < NUM_APPS ? apps[i].blurb : ACTION_BLURBS[i - NUM_APPS];
     spr.setTextDatum(ML_DATUM);
@@ -353,6 +384,9 @@ void drawMenu() {
 void openMenu() {
   setPortrait(false);
   inMenu = true;
+#ifdef BOARD_CYD
+  touch::forget();
+#endif
   menuPick = current;
   menuSince = millis();
   drawMenu();
@@ -371,26 +405,44 @@ void menuPress(int pin) {
 
 // ---------- Main ----------
 void setup() {
-  gpio_hold_dis((gpio_num_t)PIN_POWER_ON);      // held low while it was powered off
-  gpio_hold_dis((gpio_num_t)PIN_LCD_BL);
+  gpio_hold_dis((gpio_num_t)PIN_LCD_BL);        // held low while it was powered off
   gpio_deep_sleep_hold_dis();
   bool woke = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+#ifdef BOARD_CYD
+  if (woke) rtc_gpio_deinit((gpio_num_t)PIN_TOUCH_IRQ);
+  for (int p : {22, 16, 17}) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }   // RGB LED off
+  pinMode(BTN_A, INPUT_PULLUP);
+  touch::begin();
+#else
+  gpio_hold_dis((gpio_num_t)PIN_POWER_ON);
   if (woke) rtc_gpio_deinit((gpio_num_t)BTN_B);  // back to a normal input
   pinMode(PIN_POWER_ON, OUTPUT); digitalWrite(PIN_POWER_ON, HIGH);
   pinMode(BTN_A, INPUT_PULLUP);
   pinMode(BTN_B, INPUT_PULLUP);
+#endif
   Serial.begin(115200);
 
   tft.init();
-  tft.setRotation(1);           // landscape, USB on the left; use 3 to flip
+  tft.setRotation(ROT_LANDSCAPE);   // landscape, USB on the left; use 3 to flip
   tft.fillScreen(C_BG);
-  spr.createSprite(320, 170);
+  // Made before Wi-Fi starts, while memory is in one piece. setPortrait swaps it for one of
+  // the same size.
+  spr.setColorDepth(SPR_DEPTH);
+  if (!spr.createSprite(320, 170)) Serial.println("no memory for the screen");
+#ifdef BOARD_CYD
+  status::draw(true);
+  Serial.printf("heap after screen: %u free, %u largest\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
 
   loadSettings();
   applyBrightness();
   // Turned on with the top key: wait for it to be let go, so it doesn't count as "hold top".
-  if (woke) { splash("Turning on"); while (digitalRead(BTN_B) == LOW) delay(10); delay(50); }
-  bool forceSetup = !woke && digitalRead(BTN_B) == LOW;     // top key held at power-up
+  // On the CYD a tap wakes it, so wait for any touch to end too.
+  if (woke) { splash("Turning on"); while (keyDown(BTN_B) || keyDown(BTN_A)) delay(10); delay(50); }
+#ifdef BOARD_CYD
+  touch::forget();
+#endif
+  bool forceSetup = !woke && keyDown(BTN_B);     // top key (CYD: NEXT) held at power-up
   connectWifi(forceSetup);
   configTzTime(cfg.tz.c_str(), "pool.ntp.org", "time.nist.gov");
 
@@ -402,6 +454,17 @@ void loop() {
   Press a = poll(btnA), b = poll(btnB);
 
   if (inMenu) {
+#ifdef BOARD_CYD
+    // A tap on a row opens it; a tap anywhere else (the status bar) moves down like NEXT.
+    int tx, ty;
+    if (touch::tap(tx, ty) && ty >= 22 && ty < 22 + ROWS_SHOWN * ROW_H && menuTop + (ty - 22) / ROW_H < ITEMS) {
+      menuPick = menuTop + (ty - 22) / ROW_H;
+      drawMenu();
+      delay(120);
+      b = NONE;
+      a = SHORT;
+    }
+#endif
     if (a == SHORT) menuPress(BTN_A);
     if (b == SHORT) menuPress(BTN_B);
     if (inMenu && millis() - menuSince > MENU_IDLE_MS) { inMenu = false; startApp(); }
@@ -414,6 +477,9 @@ void loop() {
     if (updater::tick()) startApp();      // a failed update drew over the app
   }
   checkBattery();
+#ifdef BOARD_CYD
+  status::draw(false);
+#endif
 
   // Wi-Fi watchdog: a long outage usually means the device was moved, so restart and run
   // the saved / home / phone-setup sequence again.

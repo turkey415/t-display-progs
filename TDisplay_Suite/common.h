@@ -7,15 +7,44 @@
 #include <Preferences.h>
 
 // ---------- Board pins ----------
+// Two boards share this firmware. The default is the LilyGO T-Display-S3. Building with
+// -DBOARD_CYD (see tools/build.sh) makes it for the Freenove 2.8" "Cheap Yellow Display"
+// (FNK0103B: classic ESP32, 240x320 ST7789, resistive touch). The CYD has no second key, so
+// the apps keep their 320x170 screen and the 70 spare pixels become two touch keys.
+#ifdef BOARD_CYD
+#define BOARD_NAME   "CYD SUITE"
+#define PIN_LCD_BL   21   // backlight
+#define PIN_BAT      34   // battery voltage (through 1/2 divider)
+#define BTN_A        0    // BOOT key
+#define BTN_B        100  // no such pin: the touchscreen
+#define PIN_TOUCH_IRQ 36  // low while the screen is touched (wakes it from power off)
+#define HINT_SETUP   "Hold the screen for Wi-Fi setup"
+#define HINT_WAKE    "Tap the screen to turn on"
+#else
+#define BOARD_NAME   "T-DISPLAY SUITE"
 #define PIN_POWER_ON 15   // LCD + battery power enable (must be HIGH on battery)
 #define PIN_LCD_BL   38   // backlight
 #define PIN_BAT      4    // battery voltage (through 1/2 divider)
 #define BTN_A        0    // BOOT key
 #define BTN_B        14   // the other key
+#define HINT_SETUP   "Hold the top key for Wi-Fi setup"
+#define HINT_WAKE    "Press the TOP key to turn on"
+#endif
 
 // ---------- Colors (RGB565) ----------
 #define C_BG     0x0000
+// Very dark greys (grid lines, row dividers) go black in the CYD's 8-bit buffer; FAINT(c)
+// keeps c on the T-Display and uses the darkest grey that survives on the CYD.
+#ifdef BOARD_CYD
+#define FAINT(c) 0x2108
+#else
+#define FAINT(c) (c)
+#endif
+#ifdef BOARD_CYD
+#define C_HDR    0x2108   // the CYD's 8-bit screen buffer turns 0x18E3 black; this stays a dark blue-grey
+#else
 #define C_HDR    0x18E3
+#endif
 #define C_TEXT   0xFFFF
 #define C_DIM    0x8410
 #define C_ACC    0x5DDF
@@ -26,6 +55,14 @@
 
 TFT_eSPI    tft;
 TFT_eSprite spr(&tft);
+// The screen buffer's colour depth. The CYD's classic ESP32 has no PSRAM: a 16-bit 320x170
+// buffer (109 KB) leaves too little memory for HTTPS (Coinbase, GitHub updates), so it uses
+// 8-bit colour (RGB332, 54 KB). Colours are rounded a little; very dark ones go black.
+#ifdef BOARD_CYD
+#define SPR_DEPTH 8
+#else
+#define SPR_DEPTH 16
+#endif
 
 // ---------- Settings (set from the Wi-Fi setup page, kept in flash) ----------
 struct Settings {
@@ -64,6 +101,101 @@ void stepBrightness() {
 // Bumped each time Wi-Fi comes back after a drop, so apps can re-check things.
 uint32_t wifiEpoch = 0;
 
+// ---------- Screen orientation ----------
+// Every app is landscape (320x170, USB on the left) except the ones that ask for portrait
+// (170x320, USB at the bottom). The menu, setup and update screens are always landscape.
+const int ROT_LANDSCAPE = 1;
+const int ROT_PORTRAIT  = 0;    // USB at the bottom (2 puts it at the top)
+bool portrait = false;
+
+// ---------- Touch (CYD only) ----------
+// The XPT2046 touch chip has its own pins, read by bit-banging. The CYD's only readable button
+// is BOOT (the other one is RESET, wired to the chip), so the touchscreen stands in for the
+// T-Display's top key: a tap anywhere = top key, holding = hold top. BOOT = the bottom key.
+// The 70 pixels the 320x170 apps don't use hold a status bar (status::, at the end).
+#ifdef BOARD_CYD
+namespace touch {
+const int T_CLK = 25, T_DIN = 32, T_DO = 39, T_CS = 33;
+// Raw readings at the screen edges in landscape, from tapping four corners (2026-10-19).
+// Screen x follows the raw Y channel, screen y the raw X channel.
+const int RY_LEFT = 211, RY_RIGHT = 3716;   // raw Y at landscape x = 0 and x = 320
+const int RX_TOP  = 307, RX_BOT   = 3948;   // raw X at landscape y = 0 and y = 240
+const int Z_ON = 150;                        // pressure that counts as a touch
+
+bool down = false;           // a finger is on the screen
+int  x = 0, y = 0;           // where, in the screen's current rotation
+bool tapped = false;         // a short tap on the canvas just ended, at tapX, tapY
+int  tapX, tapY;
+uint32_t downAt = 0;
+
+void clk() { digitalWrite(T_CLK, HIGH); digitalWrite(T_CLK, LOW); }
+
+// One 12-bit conversion. The commands keep power-down mode 00, so the chip's pen interrupt
+// stays on between readings (power off relies on it).
+int read(uint8_t cmd) {
+  digitalWrite(T_CS, LOW);
+  for (int i = 7; i >= 0; i--) { digitalWrite(T_DIN, (cmd >> i) & 1); clk(); }
+  clk();
+  int d = 0;
+  for (int i = 11; i >= 0; i--) { d |= digitalRead(T_DO) << i; clk(); }
+  clk(); clk(); clk();
+  digitalWrite(T_CS, HIGH);
+  return d;
+}
+
+void begin() {
+  pinMode(T_CLK, OUTPUT); pinMode(T_DIN, OUTPUT); pinMode(T_CS, OUTPUT); pinMode(T_DO, INPUT);
+  digitalWrite(T_CS, HIGH);
+  pinMode(PIN_TOUCH_IRQ, INPUT);
+  read(0x90);
+}
+
+void update() {
+  static uint32_t last = 0;
+  if (millis() - last < 8) return;
+  last = millis();
+  bool on = read(0xB0) > Z_ON;
+  if (on) {
+    int rx = 0, ry = 0;
+    for (int i = 0; i < 4; i++) { rx += read(0xD0); ry += read(0x90); }
+    rx /= 4; ry /= 4;
+    on = read(0xB0) > Z_ON;          // still pressed, so the reading wasn't taken mid-lift
+    int lx = constrain(map(ry, RY_LEFT, RY_RIGHT, 0, 320), 0, 319);
+    int ly = constrain(map(rx, RX_TOP, RX_BOT, 0, 240), 0, 239);
+    if (on) {
+      if (portrait) { x = 239 - ly; y = lx; } else { x = lx; y = ly; }
+    }
+  }
+  if (on == down) return;
+  down = on;
+  if (on) downAt = millis();
+  else if (millis() - downAt < 600) { tapped = true; tapX = x; tapY = y; }
+}
+
+// A finished short tap, where it was in the current rotation (= sprite coordinates).
+bool tap(int& px, int& py) {
+  update();
+  if (!tapped) return false;
+  tapped = false;
+  px = tapX; py = tapY;
+  return true;
+}
+
+void forget() { tapped = false; }
+}  // namespace touch
+#endif
+
+// Is a key held down? On the CYD the "top key" is the whole touchscreen and the bottom key
+// is the BOOT button.
+bool keyDown(int pin) {
+#ifdef BOARD_CYD
+  if (pin == BTN_B) { touch::update(); return touch::down; }
+  return digitalRead(pin) == LOW;
+#else
+  return digitalRead(pin) == LOW;
+#endif
+}
+
 // ---------- Buttons ----------
 // A short press fires when the key is let go; holding fires LONG once and swallows the release.
 enum Press { NONE, SHORT, LONG };
@@ -77,7 +209,7 @@ struct Button {
 };
 
 Press poll(Button& b) {
-  bool d = digitalRead(b.pin) == LOW;
+  bool d = keyDown(b.pin);
   uint32_t now = millis();
   if (d != b.down && now - b.changed > 30) {
     b.changed = now;
@@ -89,20 +221,21 @@ Press poll(Button& b) {
   return NONE;
 }
 
-// ---------- Screen orientation ----------
-// Every app is landscape (320x170, USB on the left) except the ones that ask for portrait
-// (170x320, USB at the bottom). The menu, setup and update screens are always landscape.
-const int ROT_LANDSCAPE = 1;
-const int ROT_PORTRAIT  = 0;    // USB at the bottom (2 puts it at the top)
-bool portrait = false;
+#ifdef BOARD_CYD
+namespace status { void draw(bool full); }
+#endif
 
 void setPortrait(bool p) {
   if (p == portrait) return;
   portrait = p;
   tft.setRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
   tft.fillScreen(C_BG);
-  spr.deleteSprite();
+  spr.deleteSprite();          // the same size either way, so the memory is reused at once
+  spr.setColorDepth(SPR_DEPTH);
   spr.createSprite(p ? 170 : 320, p ? 320 : 170);
+#ifdef BOARD_CYD
+  status::draw(true);
+#endif
 }
 
 // ---------- Battery ----------
@@ -170,9 +303,18 @@ void updateBattery() {
   }
 }
 
+// Check 1. The CYD's USB goes through a CH340 chip, so the ESP32 can't tell.
+bool computerPlugged() {
+#ifdef BOARD_CYD
+  return false;
+#else
+  return HWCDC::isPlugged();
+#endif
+}
+
 bool onUSB() {
   updateBattery();
-  return HWCDC::isPlugged() || batV > BAT_USB_V || charging;
+  return computerPlugged() || batV > BAT_USB_V || charging;
 }
 
 // A Li-ion cell's charge (0-100) from its voltage, at light load.
@@ -313,3 +455,79 @@ struct App {
   void (*run)();
   void (*press)(int pin);
 };
+
+// ---------- Status bar (CYD only) ----------
+// In the 70 pixels the apps leave free: below them in landscape, to their right in portrait.
+// Drawn straight to the screen (the sprite never covers it), changed parts once a second.
+#ifdef BOARD_CYD
+namespace status {
+const uint16_t C_LINE = 0x2124;
+
+String clockText(const tm& t) {
+  char b[8];
+  if (cfg.clock24) strftime(b, sizeof b, "%H:%M", &t);
+  else { strftime(b, sizeof b, "%I:%M", &t); if (b[0] == '0') memmove(b, b + 1, strlen(b)); }
+  return b;
+}
+
+// Draws text with a background box as wide as `pad`, so a shorter value wipes the old one.
+void text(const String& s, int x, int y, int font, uint16_t col, uint8_t datum, int pad) {
+  tft.setTextDatum(datum);
+  tft.setTextColor(col, C_BG);
+  tft.setTextPadding(pad);
+  tft.drawString(s, x, y, font);
+  tft.setTextPadding(0);
+}
+
+void wifiBars(int x, int y, int rssi, bool up) {        // 4 bars, bottom-left at (x, y)
+  int n = up ? bars(rssi) : 0;
+  uint16_t c = up ? rssiColor(rssi) : C_BAD;
+  for (int i = 0; i < 4; i++) {
+    int h = 4 + i * 4;
+    tft.fillRect(x + i * 5, y - 16, 3, 16 - h, C_BG);
+    tft.fillRect(x + i * 5, y - h, 3, h, i < n ? c : 0x2945);
+  }
+}
+
+String batText() {
+  return onUSB() ? String("USB power") : "Battery " + String(batteryPct()) + "%";
+}
+uint16_t batColor() {
+  int p = batteryPct();
+  return onUSB() ? C_DIM : p > 50 ? C_GOOD : p > 20 ? C_WARN : C_BAD;
+}
+
+void draw(bool full) {
+  static uint32_t last = 0;
+  if (!full && millis() - last < 1000) return;
+  last = millis();
+  time_t now = time(nullptr);
+  tm t;
+  localtime_r(&now, &t);
+  bool synced = now > 1700000000;
+  bool up = wifiUp();
+  int rssi = up ? WiFi.RSSI() : 0;
+  char date[16];
+  strftime(date, sizeof date, "%a %b %e", &t);
+
+  if (!portrait) {
+    if (full) { tft.fillRect(0, 170, 320, 70, C_BG); tft.drawFastHLine(0, 171, 320, C_LINE); }
+    text(synced ? clockText(t) : String("--:--"), 8, 174, 6, C_TEXT, TL_DATUM, 130);
+    text(synced ? String(date) : String(""), 10, 231, 2, C_DIM, ML_DATUM, 120);
+    wifiBars(296, 196, rssi, up);
+    text(up ? String(rssi) : String(""), 290, 189, 2, up ? rssiColor(rssi) : C_BAD, MR_DATUM, 34);
+    text(up ? WiFi.SSID() : String("Wi-Fi down"), 312, 206, 2, up ? C_TEXT : C_BAD, MR_DATUM, 170);
+    text(up ? WiFi.localIP().toString() : String(""), 312, 222, 2, C_DIM, MR_DATUM, 170);
+    text(batText(), 250, 189, 2, batColor(), MR_DATUM, 100);
+  } else {
+    if (full) { tft.fillRect(170, 0, 70, 320, C_BG); tft.drawFastVLine(171, 0, 320, C_LINE); }
+    text(synced ? clockText(t) : String("--:--"), 206, 20, 4, C_TEXT, MC_DATUM, 66);
+    strftime(date, sizeof date, "%b %e", &t);
+    text(synced ? String(date) : String(""), 206, 44, 2, C_DIM, MC_DATUM, 66);
+    wifiBars(196, 90, rssi, up);
+    text(up ? String(rssi) + " dBm" : String("no Wi-Fi"), 206, 102, 1, up ? rssiColor(rssi) : C_BAD, MC_DATUM, 66);
+    text(onUSB() ? String("USB") : String(batteryPct()) + "%", 206, 130, 2, batColor(), MC_DATUM, 66);
+  }
+}
+}  // namespace status
+#endif

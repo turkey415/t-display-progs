@@ -144,7 +144,7 @@ void render() {
     spr.setTextDatum(ML_DATUM);
     spr.setTextColor(C_TEXT, C_BG);
     spr.drawString(fit(h.name, 165, 2), 3, y + 12);          // device name, bottom line
-    spr.drawFastHLine(0, y + ROW_H - 1, 170, 0x1082);
+    spr.drawFastHLine(0, y + ROW_H - 1, 170, FAINT(0x1082));
   }
 
   spr.drawFastHLine(0, 305, 170, C_HDR);

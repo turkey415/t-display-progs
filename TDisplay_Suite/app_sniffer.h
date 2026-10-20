@@ -5,10 +5,15 @@
 // The ESP32-S3 hears 2.4 GHz Wi-Fi only (no 5 GHz) and Bluetooth Low Energy only (no Classic).
 // Only listens; it never joins or connects to anything it finds.
 // Keys: BTN_B Wi-Fi / Bluetooth, BTN_A next page of the list.
+// The CYD build has no Bluetooth view: Bluetooth doesn't fit beside Wi-Fi in a classic ESP32's
+// fast RAM (IRAM), and its memory use would crowd out the screen. Both keys page the list there.
 #pragma once
+#ifndef BOARD_CYD
+#define SNIFFER_BLE
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#endif
 
 namespace sniffer {
 
@@ -54,6 +59,7 @@ void wifiScan() {
 }
 
 // ---------- Bluetooth ----------
+#ifdef SNIFFER_BLE
 struct Dev { char addr[18]; char name[24]; int rssi; uint16_t maker; bool hasMaker; uint32_t seen; };
 Dev      devs[MAX_DEVS];
 int      numDevs = 0;
@@ -132,6 +138,7 @@ void bleScan() {
   }
   portEXIT_CRITICAL(&devLock);
 }
+#endif  // SNIFFER_BLE
 
 // ---------- Drawing ----------
 void footer(const String& left, int total) {
@@ -180,6 +187,7 @@ void drawWifi() {
   footer("ch | dBm  " + String(open) + " open", numNets);
 }
 
+#ifdef SNIFFER_BLE
 void drawBle() {
   static Dev copy[MAX_DEVS];     // not on the stack: 80 devices is about 4.5 KB
   portENTER_CRITICAL(&devLock);
@@ -212,6 +220,10 @@ void drawBle() {
   for (int i = 0; i < n; i++) named += copy[i].name[0] != 0;
   footer(String(named) + " named, BLE only", n);
 }
+#else
+void drawBle() {}
+void bleScan() {}
+#endif
 
 void render() {
   spr.fillSprite(C_BG);
@@ -233,7 +245,11 @@ void run() {
 }
 
 void press(int pin) {
+#ifdef SNIFFER_BLE
   if (pin == BTN_B) {
+#else
+  if (false) {
+#endif
     view ^= 1;
     pageNo = 0;
   } else {
