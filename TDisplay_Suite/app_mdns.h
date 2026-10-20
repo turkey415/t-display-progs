@@ -14,7 +14,7 @@
 namespace mdnsbrowser {
 
 const int ROW_H = 19, TOP = 22, ROWS = 14;
-const int MAX_HITS = 60;
+const int MAX_HITS = 100;   // a house full of Shellys fills 60 fast
 
 // The service types worth asking about at a LAN party / home network, with friendly names.
 struct Svc { const char* type; const char* proto; const char* label; };
@@ -29,6 +29,8 @@ const Svc SERVICES[] = {
   {"_pdl-datastream", "_tcp", "Printer"},
   {"_hap",        "_tcp", "HomeKit"},
   {"_homekit",    "_tcp", "HomeKit"},
+  {"_shelly",     "_tcp", "Shelly"},     // before Web: each also answers _http
+  {"_wled",       "_tcp", "WLED"},
   {"_ssh",        "_tcp", "SSH"},
   {"_sftp-ssh",   "_tcp", "SFTP"},
   {"_http",       "_tcp", "Web"},
@@ -67,6 +69,13 @@ bool haveHit(const char* name, const char* label) {
   return false;
 }
 
+// A device already listed under a more specific service (Shelly, WLED, printer...) isn't
+// listed again as "Web": nearly all of them run a web page too.
+bool listedElsewhere(const char* name) {
+  for (int i = 0; i < numHits; i++) if (strcmp(hits[i].name, name) == 0) return true;
+  return false;
+}
+
 // Pull any finished async query's results in, then start the next service type.
 void pump() {
   if (!mdnsReady || !wifiUp()) return;
@@ -78,6 +87,7 @@ void pump() {
     for (mdns_result_t* r = res; r && numHits < MAX_HITS; r = r->next) {
       const char* nm = r->instance_name ? r->instance_name : (r->hostname ? r->hostname : "?");
       if (haveHit(nm, SERVICES[svcIdx].label)) continue;
+      if (!strcmp(SERVICES[svcIdx].label, "Web") && listedElsewhere(nm)) continue;
       Hit& h = hits[numHits++];
       strlcpy(h.label, SERVICES[svcIdx].label, sizeof h.label);
       strlcpy(h.name, nm, sizeof h.name);
@@ -102,7 +112,7 @@ void pump() {
     lastQuery = millis();
     if (svcIdx == 0) sweepStart = millis();
     search = mdns_query_async_new(NULL, SERVICES[svcIdx].type, SERVICES[svcIdx].proto,
-                                  MDNS_TYPE_PTR, 1200, 8, NULL);
+                                  MDNS_TYPE_PTR, 1500, 40, NULL);   // up to 40 answers per type
     if (!search) svcIdx = (svcIdx + 1) % NUM_SVC;
   }
 }
