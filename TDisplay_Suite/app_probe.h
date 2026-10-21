@@ -30,7 +30,8 @@ struct Probe {
   char id[13], name[33];
   char sw[48], port[40], vlan[8], plat[28], mgmt[16], via[10];
   char ip[16];            // the probe's own address (from the message)
-  char httpIp[16];        // where to poll it over HTTP ("" = not found by mDNS)
+  char httpIp[16];        // where to poll it over HTTP: found by mDNS, or else the address it broadcast
+  bool byMdns;            // httpIp came from mDNS
   bool hasCdp, linkUp;
   int  speed, flaps;
   char duplex[6];
@@ -103,6 +104,7 @@ void take(const char* body, size_t len, bool viaHttp, const char* httpIp) {
   strlcpy(p.name, doc["name"] | id, sizeof p.name);
   strlcpy(p.ip, doc["ip"] | "", sizeof p.ip);
   if (httpIp) strlcpy(p.httpIp, httpIp, sizeof p.httpIp);
+  else if (!p.httpIp[0] && p.ip[0]) strlcpy(p.httpIp, p.ip, sizeof p.httpIp);   // no mDNS: use the address it sent
   JsonObject link = doc["link"];
   p.linkUp = link["up"] | false;
   p.speed  = link["speed"] | 0;
@@ -176,6 +178,7 @@ void findProbes() {
       bool known = false;
       for (int i = 0; i < numProbes; i++) if (!strcmp(probes[i].httpIp, ip) || !strcmp(probes[i].ip, ip)) {
         strlcpy(probes[i].httpIp, ip, sizeof probes[i].httpIp);
+        probes[i].byMdns = true;
         known = true;
       }
       if (!known && numProbes < MAX_PROBES) {
@@ -186,6 +189,7 @@ void findProbes() {
         strlcpy(p.name, r->hostname ? r->hostname : ip, sizeof p.name);
         strlcpy(p.httpIp, ip, sizeof p.httpIp);
         strlcpy(p.ip, ip, sizeof p.ip);
+        p.byMdns = true;
       }
     }
     mdns_query_results_free(res);
@@ -352,14 +356,18 @@ void pagePaths(const Probe& p) {
   int y = 24, h = 20;
   bool udp = p.heardUdp && millis() - p.heardUdp < STALE_MS, web = p.heardHttp && millis() - p.heardHttp < STALE_MS;
   row(y, "Broadcast", p.heardUdp ? udp : 0, ago(p.heardUdp), udp ? C_TEXT : C_DIM); y += h;
-  row(y, "HTTP", p.heardHttp ? web : (p.httpIp[0] ? 0 : -1), p.httpIp[0] ? ago(p.heardHttp) : String("not found by mDNS"), web ? C_TEXT : C_DIM); y += h;
+  row(y, "HTTP", p.heardHttp ? web : (p.httpIp[0] ? 0 : -1), p.httpIp[0] ? ago(p.heardHttp) : String("no address yet"), web ? C_TEXT : C_DIM); y += h;
+  row(y, "mDNS", p.byMdns ? 1 : (lastFind && millis() - lastFind > 3000 ? 0 : -1), p.byMdns ? String("found") : String("not found"), p.byMdns ? C_TEXT : C_DIM); y += h;
   row(y, "Radio", -1, "ESP-NOW: not yet", C_DIM); y += h;
   row(y, "Web page", -1, p.ip[0] ? String("http://") + p.ip + "/" : String("-"), C_ACC); y += h;
   spr.setTextFont(1); spr.setTextDatum(TL_DATUM); spr.setTextColor(C_DIM, C_BG);
-  y += 6;
+  y += 4;
   if (p.heardUdp == 0 && p.heardHttp)
-    spr.drawString("No broadcast over Wi-Fi: the AP or controller", 8, y),
-    spr.drawString("is not passing broadcasts. HTTP still works.", 8, y + 11);
+    spr.drawString("No broadcast over Wi-Fi: the AP or controller is", 8, y),
+    spr.drawString("not passing broadcasts. HTTP still works.", 8, y + 11);
+  else if (!p.byMdns && lastFind)
+    spr.drawString("mDNS: _probe-deck._tcp not answered (Wi-Fi", 8, y),
+    spr.drawString("controller may need it in its mDNS services)", 8, y + 11);
   else
     spr.drawString("id " + String(p.id) + "   message #" + String(p.seq), 8, y);
 }
