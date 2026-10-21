@@ -77,7 +77,11 @@ There could be several probes out at any time, so the viewer must handle more th
 
 Plan: get the ESP32 probe working first (cheap, many of them), then build the pocket gigabit probe below, then teach the Slate 7 to send the same messages, then decide on SFP+ if fiber ports need testing.
 
-### Pocket gigabit probe (chosen)
+### Pocket gigabit probe (built: probe-01)
+
+**Status (2026-10-20):** probe-01 is built and runs [Probe Deck](https://github.com/turkey415/probe-deck) (DietPi, web page, Perf-Deck station, probe message on UDP 47474 and `GET /api/probe`, mDNS `_probe-deck._tcp`). The **Probe Viewer** app (v1.8.0) is the first version of the viewer described above. It gets results by UDP broadcast or HTTP. Still to do: the ESP32-C3 ESP-NOW radio path, and making the ESP32 W5500 probe send the same message.
+
+The original plan:
 
 The Slate 7 is too big to slide in and out of a pocket, so the handheld gigabit probe is:
 
