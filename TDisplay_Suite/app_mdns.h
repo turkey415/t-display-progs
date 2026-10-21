@@ -173,7 +173,7 @@ void start() {
   setPortrait(true);
   allowWide();                     // CYD: tap the status bar to slide it away
   pageNo = 0;
-  if (!mdnsReady) { mdnsReady = (mdns_init() == ESP_OK); }
+  if (!mdnsReady) { esp_err_t e = mdns_init(); mdnsReady = e == ESP_OK || e == ESP_ERR_INVALID_STATE; }   // Probe Viewer may have started it
   started = true;
   frame(render);
 }

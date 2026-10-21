@@ -47,6 +47,7 @@
 #include "app_pinggraph.h"
 #include "app_dhcp.h"
 #include "app_lanscan.h"
+#include "app_probe.h"
 #ifdef BOARD_CYD
 #include "app_preclock.h"
 #endif
@@ -100,6 +101,7 @@ App apps[] = {
   {"Ping Graph",      "Latency + jitter graph",   pinggraph::start, pinggraph::run, pinggraph::press},
   {"DHCP Finder",     "Find rogue DHCP servers",  dhcpfinder::start, dhcpfinder::run, dhcpfinder::press},
   {"LAN Scanner",     "Devices on the subnet",    lanscan::start,   lanscan::run,   lanscan::press},
+  {"Probe Viewer",    "Switch port from a probe", probeview::start, probeview::run, probeview::press},
 #ifdef BOARD_CYD
   {"Precision Clock", "NTP to the ms, drift",     preclock::start,  preclock::run,  preclock::press},
 #endif
