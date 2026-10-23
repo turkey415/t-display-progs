@@ -121,4 +121,5 @@ Still ideas:
 
 ## Smaller things
 
+- **Setup page slow / phones dropping off (v1.9.1, branch `portal-fast-scan`, not yet tested on a phone):** on 2026-10-22 a new T-Display's "Configure WiFi" didn't respond inside the iPhone sign-in window, and closing that window dropped the phone off the hotspot (iOS leaves hotspots with no internet: tap Cancel → Use Other Network, then open 192.168.4.1 in Safari). A first fix preloaded an async scan, which made the page take 20-30 s: WiFiManager 2.0.17 rescans on every home-page hit (it passes `_scancachetime` as the `force` flag) and phones' captive checks hit it constantly. The branch now just keeps the scan list for 2 minutes and doesn't time out the portal while a phone is connected. Check the page opens in a few seconds, then merge.
 - **Battery bolt (v1.3.1):** tune the charger-detection numbers (`STEP_UP_V`, `STEP_DOWN_V`, `TREND_V` in `common.h`) against real serial logs on a power bank and a wall charger.

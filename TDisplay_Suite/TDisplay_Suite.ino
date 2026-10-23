@@ -275,6 +275,12 @@ void runPortal() {
   wm.setSaveParamsCallback(saveParams);
   wm.setBreakAfterConfig(true);
   wm.setConfigPortalTimeout(PORTAL_SECS);
+  wm.setAPClientCheck(true);          // don't time out while a phone is still connected
+  // "Configure WiFi" scans once (a few seconds) and keeps the list for 2 minutes. No preload:
+  // WiFiManager 2.0.17 then rescans on every home-page hit (it passes the cache time as its
+  // "force" flag), and phones' captive-portal checks hit it constantly, so scans pile up and
+  // the page takes half a minute.
+  wm._scancachetime = 120000;
   showSetup();
   wm.startConfigPortal(AP_NAME);
   ESP.restart();
