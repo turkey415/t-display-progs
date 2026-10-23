@@ -3,6 +3,7 @@
 #   TDisplay_Suite.bin       the app, for updates over Wi-Fi
 #   TDisplay_Suite-full.bin  everything at offset 0, for a first flash over USB
 #   CYD_Suite.bin, CYD_Suite-full.bin   the same two for the Freenove 2.8" CYD
+#   CYD35_Suite.bin, CYD35_Suite-full.bin   and for the 3.5" ESP32-3248S035C
 #   version.txt              the version, which devices compare with their own
 name: Build
 
@@ -62,6 +63,11 @@ jobs:
             --build-property "compiler.cpp.extra_flags=$(cat tools/cyd_flags.txt)" TDisplay_Suite
           cp build-cyd/TDisplay_Suite.ino.bin dist/CYD_Suite.bin
           cp build-cyd/TDisplay_Suite.ino.merged.bin dist/CYD_Suite-full.bin
+          # The 3.5" ESP32-3248S035C build, set up from tools/cyd35_flags.txt.
+          arduino-cli compile --fqbn "$FQBN_CYD" --output-dir build-cyd35 \
+            --build-property "compiler.cpp.extra_flags=$(cat tools/cyd35_flags.txt)" TDisplay_Suite
+          cp build-cyd35/TDisplay_Suite.ino.bin dist/CYD35_Suite.bin
+          cp build-cyd35/TDisplay_Suite.ino.merged.bin dist/CYD35_Suite-full.bin
           sed -n 's/#define FW_VERSION "\(.*\)"/\1/p' TDisplay_Suite/version.h > dist/version.txt
           ls -l dist
 

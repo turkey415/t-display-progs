@@ -5,13 +5,27 @@
 #include <TFT_eSPI.h>
 #include <time.h>
 #include <Preferences.h>
+#include <Wire.h>
 
 // ---------- Board pins ----------
 // Two boards share this firmware. The default is the LilyGO T-Display-S3. Building with
 // -DBOARD_CYD (see tools/build.sh) makes it for the Freenove 2.8" "Cheap Yellow Display"
 // (FNK0103B: classic ESP32, 240x320 ST7789, resistive touch). The CYD has no second key, so
 // the apps keep their 320x170 screen and the 70 spare pixels become two touch keys.
-#ifdef BOARD_CYD
+#if defined(BOARD_CYD35)
+// -DBOARD_CYD35 (with BOARD_CYD) is the 3.5" ESP32-3248S035C: 480x320 ST7796, GT911
+// capacitive touch, no battery input. The apps' 320x170 canvas is drawn 1.5x bigger, so it
+// fills the screen above a status bar, and an app can ask for a native 480x320 canvas
+// (setNative). See pushScaled().
+#define BOARD_NAME   "CYD SUITE"
+#define PIN_LCD_BL   27   // backlight
+#define BTN_A        0    // BOOT key
+#define BTN_B        100  // no such pin: the touchscreen
+#define NO_BATTERY        // GPIO34 is a light sensor here
+#define HINT_SETUP   "Hold the screen for Wi-Fi setup"
+#define HINT_WAKE    "Press BOOT to turn on"
+const int LED_PINS[] = {4, 16, 17};   // RGB LED, active low
+#elif defined(BOARD_CYD)
 #define BOARD_NAME   "CYD SUITE"
 #define PIN_LCD_BL   21   // backlight
 #define PIN_BAT      34   // battery voltage (through 1/2 divider)
@@ -20,6 +34,7 @@
 #define PIN_TOUCH_IRQ 36  // low while the screen is touched (wakes it from power off)
 #define HINT_SETUP   "Hold the screen for Wi-Fi setup"
 #define HINT_WAKE    "Tap the screen to turn on"
+const int LED_PINS[] = {22, 16, 17};  // RGB LED, active low
 #else
 #define BOARD_NAME   "T-DISPLAY SUITE"
 #define PIN_POWER_ON 15   // LCD + battery power enable (must be HIGH on battery)
@@ -77,6 +92,8 @@ struct Settings {
   bool   autoUpdate;  // install new releases from GitHub by itself
   int    bright;      // backlight step, 0 = brightest
   String app;         // the app that runs at power-on, by name
+  String switches;    // Port Map: "Name=IP,IP" switches to read over SNMP
+  String community;   // Port Map: SNMP v2c read community
 } cfg;
 
 // ---------- Backlight ----------
@@ -108,6 +125,17 @@ const int ROT_LANDSCAPE = 1;
 const int ROT_PORTRAIT  = 0;    // USB at the bottom (2 puts it at the top)
 bool portrait = false;
 
+void screenRotation(int r) {
+  tft.setRotation(r);
+}
+
+#ifdef BOARD_CYD35
+// The 3.5" screen shows the canvas scaled by layNum/layDen with its corner at (layX, layY)
+// (set by applyLayout), or 1:1 when an app asked for the native 480x320 canvas.
+const int SCR_W = 480, SCR_H = 320, SB = 65;    // SB: the status bar's depth
+int layNum = 480, layDen = 320, layX = 0, layY = 0;
+#endif
+
 // ---------- Touch (CYD only) ----------
 // The XPT2046 touch chip has its own pins, read by bit-banging. The CYD's only readable button
 // is BOOT (the other one is RESET, wired to the chip), so the touchscreen stands in for the
@@ -115,6 +143,76 @@ bool portrait = false;
 // The 70 pixels the 320x170 apps don't use hold a status bar (status::, at the end).
 #ifdef BOARD_CYD
 namespace touch {
+bool down = false;           // a finger is on the screen
+int  x = 0, y = 0;           // where, in the screen's current rotation
+bool tapped = false;         // a short tap on the canvas just ended, at tapX, tapY
+int  tapX, tapY;
+uint32_t downAt = 0;
+
+void setDown(bool on) {
+  if (on == down) return;
+  down = on;
+  if (on) downAt = millis();
+  else if (millis() - downAt < 600) { tapped = true; tapX = x; tapY = y; }
+}
+
+#ifdef BOARD_CYD35
+// GT911 capacitive touch on I2C, in its portrait frame: landscape screen x follows its raw Y,
+// and screen y its raw X, reversed. From corner and port taps (2026-10-22): raw y 20..460 =
+// screen x 15..465, raw x 300..10 = screen y 15..305.
+// x, y end up in canvas coordinates (the status bar maps to just past the canvas, as on the
+// 2.8" CYD).
+const int T_SDA = 33, T_SCL = 32, T_INT = 21, T_RST = 25;
+const uint8_t ADDR = 0x5D;
+
+bool rd(uint16_t reg, uint8_t* b, int n) {
+  Wire.beginTransmission(ADDR); Wire.write(reg >> 8); Wire.write(reg & 0xFF);
+  if (Wire.endTransmission() != 0) return false;
+  if (Wire.requestFrom(ADDR, (uint8_t)n) != n) return false;
+  for (int i = 0; i < n; i++) b[i] = Wire.read();
+  return true;
+}
+
+void clearStatus() {
+  Wire.beginTransmission(ADDR); Wire.write(0x81); Wire.write(0x4E); Wire.write(0); Wire.endTransmission();
+}
+
+void begin() {
+  // INT held low through reset picks address 0x5D
+  pinMode(T_INT, OUTPUT); pinMode(T_RST, OUTPUT);
+  digitalWrite(T_INT, LOW); digitalWrite(T_RST, LOW); delay(20);
+  digitalWrite(T_RST, HIGH); delay(10);
+  pinMode(T_INT, INPUT); delay(60);
+  Wire.begin(T_SDA, T_SCL, 400000);
+}
+
+void update() {
+  static uint32_t last = 0, lastSeen = 0;
+  if (millis() - last < 8) return;
+  last = millis();
+  uint8_t st;
+  bool on = down;
+  if (rd(0x814E, &st, 1) && (st & 0x80)) {
+    on = (st & 0x0F) > 0;
+    if (on) {
+      uint8_t p[4];
+      if (rd(0x8150, p, 4)) {
+        int rx = p[0] | p[1] << 8, ry = p[2] | p[3] << 8;
+        int lx = constrain(map(ry, 20, 460, 15, 465), 0, SCR_W - 1);
+        int ly = constrain(map(rx, 300, 10, 15, 305), 0, SCR_H - 1);
+        int px = portrait ? SCR_H - 1 - ly : lx, py = portrait ? lx : ly;
+        x = max(0, px - layX) * layDen / layNum;
+        y = max(0, py - layY) * layDen / layNum;
+      }
+      lastSeen = millis();
+    }
+    clearStatus();
+  } else if (down && millis() - lastSeen > 250) {
+    on = false;                          // missed the release report
+  }
+  setDown(on);
+}
+#else
 const int T_CLK = 25, T_DIN = 32, T_DO = 39, T_CS = 33;
 // Raw readings at the screen edges in landscape, from tapping four corners (2026-10-19).
 // Screen x follows the raw Y channel, screen y the raw X channel.
@@ -122,11 +220,6 @@ const int RY_LEFT = 211, RY_RIGHT = 3716;   // raw Y at landscape x = 0 and x = 
 const int RX_TOP  = 307, RX_BOT   = 3948;   // raw X at landscape y = 0 and y = 240
 const int Z_ON = 150;                        // pressure that counts as a touch
 
-bool down = false;           // a finger is on the screen
-int  x = 0, y = 0;           // where, in the screen's current rotation
-bool tapped = false;         // a short tap on the canvas just ended, at tapX, tapY
-int  tapX, tapY;
-uint32_t downAt = 0;
 
 void clk() { digitalWrite(T_CLK, HIGH); digitalWrite(T_CLK, LOW); }
 
@@ -166,11 +259,10 @@ void update() {
       if (portrait) { x = 239 - ly; y = lx; } else { x = lx; y = ly; }
     }
   }
-  if (on == down) return;
-  down = on;
-  if (on) downAt = millis();
-  else if (millis() - downAt < 600) { tapped = true; tapX = x; tapY = y; }
+  setDown(on);
 }
+
+#endif
 
 // A finished short tap, where it was in the current rotation (= sprite coordinates).
 bool tap(int& px, int& py) {
@@ -240,15 +332,30 @@ bool redrawNow = false;
 // is drawn in two strips: frame() runs the app's drawing twice, shifted, and show() sends each
 // strip to its place. Apps just draw in canvas coordinates; anything off the strip is clipped.
 bool fullScreen = false, wideOK = false, statusHidden = false;
+bool native = false;                   // 3.5" CYD: the app draws at 480x320 (setNative)
+bool sprNative = false;                // the screen buffer is the native strip
 int  canvasW = 320, canvasH = 170;
 int  band = 0;                         // which strip frame() is drawing
-namespace status { void draw(bool full); }
+namespace status { void draw(bool full); bool visible(); }
 
 void applyLayout() {
   int cw = portrait ? (wideOK && statusHidden ? 240 : 170) : 320;
   int ch = portrait ? 320 : (fullScreen ? 240 : 170);
+#ifdef BOARD_CYD35
+  if (native) { cw = SCR_W; ch = SCR_H; }
+#endif
   if (cw == canvasW && ch == canvasH) return;
   canvasW = cw; canvasH = ch;
+#ifdef BOARD_CYD35
+  // The biggest scale that fits beside the status bar, centred.
+  int sw = portrait ? SCR_H : SCR_W, sh = portrait ? SCR_W : SCR_H;
+  bool bar = status::visible();
+  int aw = sw - (bar && portrait ? SB : 0), ah = sh - (bar && !portrait ? SB : 0);
+  if (aw * ch <= ah * cw) { layNum = aw; layDen = cw; } else { layNum = ah; layDen = ch; }
+  layX = (aw - cw * layNum / layDen) / 2;
+  layY = (ah - ch * layNum / layDen) / 2;
+  tft.fillScreen(C_BG);
+#endif
   status::draw(true);                   // covers whatever the canvas gave up
 }
 
@@ -257,8 +364,38 @@ void allowWide()     { wideOK = true;     applyLayout(); }
 int  canvasWidth()   { return canvasW; }
 int  canvasHeight()  { return canvasH; }
 
-// Draws a frame with draw(), which ends with show(), in one or two strips.
+void setPortrait(bool p);
+#ifdef BOARD_CYD35
+// Gives the app a 480x320 canvas in full 16-bit colour, landscape, no status bar. It is drawn
+// in 56-pixel strips (480x56x2 bytes fits where the 8-bit 320x170 buffer was).
+const int NATIVE_STRIP = 56;
+void setNative() {
+  setPortrait(false);
+  native = true;
+  spr.deleteSprite();
+  spr.setColorDepth(16);
+  spr.createSprite(SCR_W, NATIVE_STRIP);
+  sprNative = true;
+  canvasW = canvasH = 0;
+  applyLayout();
+}
+#else
+void setNative() { setFullScreen(); }   // the 2.8" CYD: its whole 320x240
+#endif
+
+// Draws a frame with draw(), which ends with show(), in one or more strips.
 void frame(void (*draw)()) {
+#ifdef BOARD_CYD35
+  if (sprNative) {
+    for (band = 0; band * NATIVE_STRIP < canvasH; band++) {
+      spr.setOrigin(0, -NATIVE_STRIP * band);
+      draw();
+    }
+    band = 0;
+    spr.setOrigin(0, 0);
+    return;
+  }
+#endif
   int bands = canvasW > spr.width() || canvasH > spr.height() ? 2 : 1;
   for (band = 0; band < bands; band++) {
     if (portrait) spr.setOrigin(-170 * band, 0); else spr.setOrigin(0, -170 * band);
@@ -273,21 +410,23 @@ void allowWide() {}
 int  canvasWidth()  { return spr.width(); }
 int  canvasHeight() { return spr.height(); }
 void frame(void (*draw)()) { draw(); }
+void setNative() {}
 #endif
 
 void setPortrait(bool p) {
 #ifdef BOARD_CYD
-  if (p == portrait) { applyLayout(); return; }
+  if (p == portrait && !sprNative) { applyLayout(); return; }
 #else
   if (p == portrait) return;
 #endif
   portrait = p;
-  tft.setRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
+  screenRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
   tft.fillScreen(C_BG);
   spr.deleteSprite();          // the same size either way, so the memory is reused at once
   spr.setColorDepth(SPR_DEPTH);
   spr.createSprite(p ? 170 : 320, p ? 320 : 170);
 #ifdef BOARD_CYD
+  sprNative = native = false;            // setNative() turns it back on after this
   canvasW = canvasH = 0;
   applyLayout();
 #endif
@@ -316,9 +455,13 @@ float slowV = 0;                   // about a one-minute average, to spot jumps 
 bool charging = false;             // check 3's answer
 
 float batteryVolts() {
+#ifdef NO_BATTERY
+  return 5.0f;                     // always "on USB"
+#else
   uint32_t mv = 0;
   for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(PIN_BAT);
   return mv / 8 * 2.0f / 1000.0f;
+#endif
 }
 
 void updateBattery() {
@@ -388,9 +531,16 @@ int batteryPct() {
 // USB. It is BADGE_W wide; header() keeps its right-hand text clear of it.
 const int BADGE_W = 52;
 
+#ifdef NO_BATTERY
+int hdrRight() { return canvasWidth() - 6; }
+#else
 int hdrRight() { return canvasWidth() - BADGE_W - 4; }
+#endif
 
 void drawBattery(int y = 5) {
+#ifdef NO_BATTERY
+  return;                                        // always on USB: nothing worth showing
+#endif
   int x = canvasWidth() - 23;                    // the battery body: 18 x 10, nub on the right
   bool usb = onUSB();
   int pct = batteryPct();
@@ -414,10 +564,59 @@ void drawBattery(int y = 5) {
 // Big Clock's digits fill the top, so it asks for the badge lower down.
 uint32_t pushUs = 0;             // how long the last frame (its first strip) took to reach the screen
 
+#ifdef BOARD_CYD35
+// Sends a strip of the 8-bit canvas to the screen, scaled by layNum/layDen (nearest pixel):
+// (bx, by, bw, bh) is the part of the canvas the screen buffer holds.
+void pushScaled(int bx, int by, int bw, int bh) {
+  static uint16_t lut[256];                      // RGB332 -> RGB565 as TFT_eSPI does it, bytes ready to send
+  static bool lutReady = false;
+  if (!lutReady) {
+    const uint8_t blue[] = {0, 11, 21, 31};
+    for (int c = 0; c < 256; c++) {
+      uint8_t msb = (c & 0x1C) >> 2 | (c & 0xC0) >> 3 | (c & 0xE0);
+      uint8_t lsb = (c & 0x1C) << 3 | blue[c & 0x03];
+      lut[c] = lsb << 8 | msb;
+    }
+    lutReady = true;
+  }
+  const int N = layNum, D = layDen;
+  int x0 = (bx * N + D - 1) / D, x1 = ((bx + bw) * N + D - 1) / D;   // screen pixels whose source is in the strip
+  int y0 = (by * N + D - 1) / D, y1 = ((by + bh) * N + D - 1) / D;
+  int w = x1 - x0;
+  if (w <= 0 || y1 <= y0) return;
+  static uint16_t line[SCR_W], srcX[SCR_W];
+  for (int i = 0; i < w; i++) srcX[i] = (x0 + i) * D / N - bx;
+  const uint8_t* img = (const uint8_t*)spr.getPointer();
+  int sw = spr.width();
+  bool swap = tft.getSwapBytes();
+  tft.setSwapBytes(false);
+  tft.startWrite();
+  tft.setAddrWindow(layX + x0, layY + y0, w, y1 - y0);
+  int last = -1;
+  for (int y = y0; y < y1; y++) {
+    int sy = y * D / N - by;
+    if (sy != last) {
+      const uint8_t* row = img + sy * sw;
+      for (int i = 0; i < w; i++) line[i] = lut[row[srcX[i]]];
+      last = sy;
+    }
+    tft.pushPixels(line, w);
+  }
+  tft.endWrite();
+  tft.setSwapBytes(swap);
+}
+#endif
+
 void show(int batteryY = 5) {
   drawBattery(batteryY);
   int64_t t0 = esp_timer_get_time();
-#ifdef BOARD_CYD
+#if defined(BOARD_CYD35)
+  if (sprNative)     spr.pushSprite(0, band * NATIVE_STRIP);
+  else if (band == 0) pushScaled(0, 0, spr.width(), spr.height());
+  else if (portrait) pushScaled(170, 0, canvasW - 170, 320);
+  else               pushScaled(0, 170, 320, canvasH - 170);
+  if (band == 0) pushUs = esp_timer_get_time() - t0;
+#elif defined(BOARD_CYD)
   if (band == 0)     spr.pushSprite(0, 0);
   else if (portrait) spr.pushSprite(170, 0, 0, 0, canvasW - 170, 320);   // the right-hand strip
   else               spr.pushSprite(0, 170, 0, 0, 320, canvasH - 170);   // the bottom strip
@@ -528,6 +727,11 @@ struct App {
 #ifdef BOARD_CYD
 namespace status {
 const uint16_t C_LINE = 0x2124;
+#ifdef BOARD_CYD35
+const int COL_X = 255, COL_W = 65, COL_H = 480;    // the portrait column
+#else
+const int COL_X = 170, COL_W = 70, COL_H = 320;
+#endif
 
 String clockText(const tm& t) {
   char b[8];
@@ -563,7 +767,7 @@ uint16_t batColor() {
   return onUSB() ? C_DIM : p > 50 ? C_GOOD : p > 20 ? C_WARN : C_BAD;
 }
 
-bool visible() { return !fullScreen && !(portrait && wideOK && statusHidden); }
+bool visible() { return !fullScreen && !native && !(portrait && wideOK && statusHidden); }
 
 void paint(bool full);
 
@@ -584,13 +788,14 @@ bool isToggleTap(int x, int y) {
 // Slides the portrait status column off to the right (or back in), then resizes the canvas.
 void toggle() {
   bool away = !statusHidden;
-  for (int s = 0; s <= 70; s += 10) {
-    int off = away ? s : 70 - s;
-    tft.setViewport(170, 0, 70, 320, false);   // clip to the column
-    tft.setOrigin(off, 0);                      // ...and draw it shifted right
+  for (int i = 0; i <= 7; i++) {
+    int s = COL_W * i / 7;
+    int off = away ? s : COL_W - s;
+    tft.setViewport(COL_X, 0, COL_W, COL_H, false);   // clip to the column
+    tft.setOrigin(off, 0);                             // ...and draw it shifted right
     paint(true);
     tft.resetViewport();
-    if (off) tft.fillRect(170, 0, off, 320, C_BG);
+    if (off) tft.fillRect(COL_X, 0, off, COL_H, C_BG);
     delay(15);
   }
   statusHidden = away;
@@ -608,6 +813,28 @@ void paint(bool full) {
   char date[24];
   strftime(date, sizeof date, "%a %b %e", &t);
 
+#ifdef BOARD_CYD35
+  if (!portrait) {                       // a 480x65 bar along the bottom
+    const int Y = SCR_H - SB;
+    if (full) { tft.fillRect(0, Y, SCR_W, SB, C_BG); tft.drawFastHLine(0, Y + 1, SCR_W, C_LINE); }
+    text(synced ? clockText(t) : String("--:--"), 10, Y + 9, 6, C_TEXT, TL_DATUM, 140);
+    text(synced ? String(date) : String(""), 158, Y + 22, 2, C_DIM, ML_DATUM, 110);
+    text(String("v" FW_VERSION), 158, Y + 42, 2, 0x4A49, ML_DATUM, 110);
+    wifiBars(452, Y + 26, rssi, up);
+    text(up ? String(rssi) + " dBm" : String(""), 444, Y + 18, 2, up ? rssiColor(rssi) : C_BAD, MR_DATUM, 70);
+    text(up ? WiFi.SSID() : String("Wi-Fi down"), 472, Y + 38, 2, up ? C_TEXT : C_BAD, MR_DATUM, 200);
+    text(up ? WiFi.localIP().toString() : String(""), 472, Y + 54, 2, C_DIM, MR_DATUM, 200);
+  } else {                               // a 65x480 column on the right
+    const int X = COL_X, CX = COL_X + COL_W / 2 + 1;
+    if (full) { tft.fillRect(X, 0, COL_W, COL_H, C_BG); tft.drawFastVLine(X + 1, 0, COL_H, C_LINE); }
+    text(synced ? clockText(t) : String("--:--"), CX, 20, 4, C_TEXT, MC_DATUM, COL_W - 4);
+    strftime(date, sizeof date, "%b %e", &t);
+    text(synced ? String(date) : String(""), CX, 44, 2, C_DIM, MC_DATUM, COL_W - 4);
+    wifiBars(CX - 10, 90, rssi, up);
+    text(up ? String(rssi) + " dBm" : String("no Wi-Fi"), CX, 102, 1, up ? rssiColor(rssi) : C_BAD, MC_DATUM, COL_W - 4);
+  }
+  return;
+#endif
   if (!portrait) {
     if (full) { tft.fillRect(0, 170, 320, 70, C_BG); tft.drawFastHLine(0, 171, 320, C_LINE); }
     text(synced ? clockText(t) : String("--:--"), 8, 174, 6, C_TEXT, TL_DATUM, 130);

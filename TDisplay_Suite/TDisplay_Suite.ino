@@ -48,6 +48,7 @@
 #include "app_dhcp.h"
 #include "app_lanscan.h"
 #include "app_probe.h"
+#include "app_portmap.h"
 #ifdef BOARD_CYD
 #include "app_preclock.h"
 #endif
@@ -74,6 +75,12 @@
 #endif
 #ifndef DEFAULT_SHELLY
 #define DEFAULT_SHELLY ""
+#endif
+#ifndef DEFAULT_SWITCHES
+#define DEFAULT_SWITCHES ""
+#endif
+#ifndef DEFAULT_COMMUNITY
+#define DEFAULT_COMMUNITY "public"
 #endif
 
 #ifdef BOARD_CYD
@@ -102,6 +109,7 @@ App apps[] = {
   {"DHCP Finder",     "Find rogue DHCP servers",  dhcpfinder::start, dhcpfinder::run, dhcpfinder::press},
   {"LAN Scanner",     "Devices on the subnet",    lanscan::start,   lanscan::run,   lanscan::press},
   {"Probe Viewer",    "Switch port from a probe", probeview::start, probeview::run, probeview::press},
+  {"Port Map",        "Switch ports over SNMP",   portmap::start,   portmap::run,   portmap::press},
 #ifdef BOARD_CYD
   {"Precision Clock", "NTP to the ms, drift",     preclock::start,  preclock::run,  preclock::press},
 #endif
@@ -116,7 +124,7 @@ Button btnA = {BTN_A}, btnB = {BTN_B};
 // Every app starts in landscape; the ones that want portrait turn the screen in start().
 void startApp() {
 #ifdef BOARD_CYD
-  fullScreen = wideOK = false;          // each app asks again in start()
+  fullScreen = wideOK = native = false;          // each app asks again in start()
 #endif
   setPortrait(false);
   apps[current].start();
@@ -136,6 +144,8 @@ void storeSettings() {
   prefs.putString("tz", cfg.tz);
   prefs.putString("hosts", cfg.hosts);
   prefs.putString("shelly", cfg.shelly);
+  prefs.putString("sw", cfg.switches);
+  prefs.putString("comm", cfg.community);
   prefs.putBool("fahr", cfg.fahrenheit);
   prefs.putBool("h24", cfg.clock24);
   prefs.putBool("auto", cfg.autoUpdate);
@@ -151,6 +161,8 @@ void loadSettings() {
   cfg.tz         = prefs.getString("tz", DEFAULT_TZ);
   cfg.hosts      = prefs.getString("hosts", "");
   cfg.shelly     = prefs.getString("shelly", DEFAULT_SHELLY);
+  cfg.switches   = prefs.getString("sw", DEFAULT_SWITCHES);
+  cfg.community  = prefs.getString("comm", DEFAULT_COMMUNITY);
   cfg.fahrenheit = prefs.getBool("fahr", true);
   cfg.clock24    = prefs.getBool("h24", true);
   cfg.autoUpdate = prefs.getBool("auto", true);
@@ -177,6 +189,8 @@ WiFiManagerParameter* pCall;
 WiFiManagerParameter* pTz;
 WiFiManagerParameter* pHosts;
 WiFiManagerParameter* pShelly;
+WiFiManagerParameter* pSwitches;
+WiFiManagerParameter* pComm;
 WiFiManagerParameter* pUnits;
 WiFiManagerParameter* pClock;
 WiFiManagerParameter* pAuto;
@@ -188,6 +202,8 @@ void saveParams() {
   cfg.tz       = pTz->getValue();      cfg.tz.trim();
   cfg.hosts    = pHosts->getValue();   cfg.hosts.trim();
   cfg.shelly   = pShelly->getValue();  cfg.shelly.trim();
+  cfg.switches = pSwitches->getValue(); cfg.switches.trim();
+  cfg.community = pComm->getValue();   cfg.community.trim();
   String u = pUnits->getValue(), c = pClock->getValue(), a = pAuto->getValue();
   cfg.fahrenheit = !(u.startsWith("C") || u.startsWith("c"));
   cfg.clock24    = !c.startsWith("12");
@@ -246,10 +262,12 @@ void runPortal() {
   pTz     = new WiFiManagerParameter("tz", "Local time zone, POSIX (Big Clock, Ham Shack Clock)", cfg.tz.c_str(), 48);
   pHosts  = new WiFiManagerParameter("hosts", "LAN Sentinel hosts: Label=IP,Label=IP (GW = gateway, up to 6)", cfg.hosts.c_str(), 200);
   pShelly = new WiFiManagerParameter("shelly", "Shelly temp sensor IP (Weather Clock 2nd temp; blank = off)", cfg.shelly.c_str(), 40);
+  pSwitches = new WiFiManagerParameter("sw", "Switches for Port Map: Name=IP,Name=IP (SNMP v2c, up to 6)", cfg.switches.c_str(), 160);
+  pComm   = new WiFiManagerParameter("comm", "SNMP read community (Port Map)", cfg.community.c_str(), 40, "type='password'");
   pUnits  = new WiFiManagerParameter("units", "Units: F or C", cfg.fahrenheit ? "F" : "C", 2);
   pClock  = new WiFiManagerParameter("clock", "Weather and Ham clocks: 24 or 12", cfg.clock24 ? "24" : "12", 3);
   pAuto   = new WiFiManagerParameter("auto", "Install updates from GitHub by itself: yes or no", cfg.autoUpdate ? "yes" : "no", 4);
-  for (auto* p : {pServer, pKey, pCall, pTz, pHosts, pShelly, pUnits, pClock, pAuto}) wm.addParameter(p);
+  for (auto* p : {pServer, pKey, pCall, pTz, pHosts, pShelly, pSwitches, pComm, pUnits, pClock, pAuto}) wm.addParameter(p);
 
   std::vector<const char*> menu = {"wifi", "param", "info", "update", "restart"};   // update: upload a .bin
   wm.setMenu(menu);
@@ -319,7 +337,13 @@ void powerOff(const char* why) {
   // The touch chip pulls its IRQ pin low when touched; GPIO36 is input-only and has a
   // pull-up on the board, so it wakes the ESP32 straight from it.
   gpio_deep_sleep_hold_en();
+#ifdef PIN_TOUCH_IRQ
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_TOUCH_IRQ, 0);
+#else
+  // The 3.5" CYD's touch interrupt (GPIO21) can't wake the chip, so BOOT does.
+  rtc_gpio_pullup_en((gpio_num_t)BTN_A);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_A, 0);
+#endif
 #else
   pinMode(PIN_POWER_ON, OUTPUT); digitalWrite(PIN_POWER_ON, LOW);   // LCD power off
   gpio_hold_en((gpio_num_t)PIN_POWER_ON);
@@ -352,7 +376,9 @@ void checkBattery() {
 const int ROW_H = 21, ROWS_SHOWN = 7;
 const int ITEMS = NUM_APPS + 3;      // + "Check for update", "Wi-Fi & settings", "Power off"
 bool inMenu = false;
-#ifdef BOARD_CYD
+#if defined(BOARD_CYD35)
+#define BOARD_WAKE_BLURB "BOOT turns it on"
+#elif defined(BOARD_CYD)
 #define BOARD_WAKE_BLURB "A tap turns it on"
 #else
 #define BOARD_WAKE_BLURB "Top key turns it on"
@@ -394,7 +420,7 @@ void drawMenu() {
 
 void openMenu() {
 #ifdef BOARD_CYD
-  fullScreen = wideOK = false;
+  fullScreen = wideOK = native = false;
 #endif
   setPortrait(false);
   inMenu = true;
@@ -423,8 +449,12 @@ void setup() {
   gpio_deep_sleep_hold_dis();
   bool woke = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
 #ifdef BOARD_CYD
+#ifdef PIN_TOUCH_IRQ
   if (woke) rtc_gpio_deinit((gpio_num_t)PIN_TOUCH_IRQ);
-  for (int p : {22, 16, 17}) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }   // RGB LED off
+#else
+  if (woke) rtc_gpio_deinit((gpio_num_t)BTN_A);
+#endif
+  for (int p : LED_PINS) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }   // RGB LED off
   pinMode(BTN_A, INPUT_PULLUP);
   touch::begin();
 #else
@@ -437,7 +467,7 @@ void setup() {
   Serial.begin(115200);
 
   tft.init();
-  tft.setRotation(ROT_LANDSCAPE);   // landscape, USB on the left; use 3 to flip
+  screenRotation(ROT_LANDSCAPE);   // landscape, USB on the left; use 3 to flip
   tft.fillScreen(C_BG);
   // Made before Wi-Fi starts, while memory is in one piece. setPortrait swaps it for one of
   // the same size.

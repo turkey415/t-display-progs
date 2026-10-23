@@ -21,6 +21,7 @@ Programs for the **LilyGO T-Display-S3** (ESP32-S3, 1.9" 170×320 screen). The s
 | **DHCP Finder** | Broadcasts a DHCP request and lists every server that answers, with its address, MAC, and the address and gateway it offered. One server is normal; a second turns the screen red (a rogue DHCP server, usually someone's home router). It only asks and listens; it never takes an address or changes the device's own networking. |
 | **LAN Scanner** | Sweeps the subnet by ARP and lists every device that answers, with its IP, MAC and maker (from the MAC), flagging ones that appear after the first sweep. Local subnet only (/24 around the device's own IP). Sends only ARP requests. |
 | **Probe Viewer** | What a [Probe Deck](https://github.com/turkey415/probe-deck) network probe found on the switch port it's plugged into. **Port** page: the switch port in big letters (e.g. `Gi0/7`), VLAN, switch name, model and management IP from CDP/LLDP, link speed, link drops and the seconds from plug-in to an IP. **Tests** page: link, address, gateway ping and loss, DNS, internet and the last speed test, each with a green/red light. **Paths** page: whether the probe's broadcast (UDP 47474), its web API (at the address it broadcast, or found by mDNS) and mDNS each get through. Many Wi-Fi controllers block broadcasts or unlisted mDNS services, so the page says which way failed. Several probes at once: the bottom key steps through them, and a probe that's just been plugged into a new jack takes the screen by itself. Top key: next page. |
+| **Port Map** | A live front panel of a managed switch (made for the LAN party's Catalyst 3560s), read over SNMP v2c, in the Perf-Deck look. Every port is a jack in the switch's own layout (odd ports on top, blocks of 12, uplinks set apart) with a glowing link LED: green for a link, amber at 10M, orange at half duplex, dark for no link. The LED flickers with traffic and blinks red while the port's input errors climb. A blue-tinted jack is a trunk, a struck-out one is shut down, a yellow dot is PoE being delivered. A lamp row counts ports up, idle, shut, PoE (and the PoE budget), trunks and errors. The selected port's panel shows its description, link speed and duplex (half duplex in red), VLAN or trunk, PoE class, the CDP neighbour and its port, the input error count, IN/OUT seven-segment readouts with LED meters (log scale up to the port's speed) and a three-minute traffic graph. A second view ranks the busiest ports. CYD: tap a port to select it, tap the bottom panel for the other view, tap the header for the next switch, BOOT = the next port with a link. T-Display: top key = next port with a link, bottom key = next view, then next switch. On the 3.5" CYD it uses the full 480×320 screen in 16-bit colour. |
 | **Precision Clock** *(CYD only)* | A full-screen lab clock in LED digits to the millisecond (tap them: red, green or dark blue), kept by its own NTP client: six servers (Cloudflare, Google, Apple, NIST, pool.ntp.org, the gateway) polled every 64 s, the shortest-round-trip sample per server, Marzullo's algorithm to drop servers that disagree, and a weighted average of the rest. It learns the board crystal's drift (ppm and s/day) from 30 minutes of offsets so the time runs smoothly between samples, and shows the honest error bound (±) NTP computes. Also UTC, Unix time, MJD, day of year and ISO week. Tap: the clock → a source table like `ntpq -p` (reach, offset, delay, jitter, which server is in use or rejected) → three clocks side by side (NTP, the ESP32's own SNTP clock, and the bare crystal left free-running since the first sync) with a graph of the crystal's wander. BOOT: sync again now. |
 
 ### Wi-Fi and settings
@@ -38,6 +39,7 @@ Settings on that page:
 - **Callsign** and **local time zone** (POSIX, e.g. `CST6CDT,M3.2.0,M11.1.0`) for the Ham Shack Clock.
 - **LAN Sentinel hosts**: `Label=target,Label=target`, up to 6. A target is an IP, a hostname, or `GW` for the gateway. Empty means the gateway, Cloudflare (1.1.1.1), Control D (76.76.2.0), Quad9 (9.9.9.9), OpenDNS (208.67.222.222) and google.com.
 - **Shelly temp sensor IP** (optional): a Shelly device on the Wi-Fi with a temperature sensor, e.g. `10.2.1.60`. The Weather Clock then shows that local reading (say, a well-house sensor) next to the online temperature, labelled **AIR** and **WELL**. Blank turns it off. Uses the Shelly local HTTP API (Gen1 or Gen2+), which is on with no login unless you set a device password.
+- **Switches for Port Map**: `Name=IP,Name=IP`, up to 6 (`IP:port` for an agent on another port), and the **SNMP read community** (v2c). The switch must answer SNMP from the display's Wi-Fi address, so check any `snmp-server community ... RO <acl>`.
 - **Units** F or C, **clock** 24 or 12 (for the Weather and Ham clocks; the Big Clock is always 24-hour).
 - **Install updates by itself**: yes or no (see below).
 
@@ -82,6 +84,8 @@ In the **mDNS Browser** (portrait), tap the status column and it slides off to t
 
 Differences: the setup hotspot is **CYD-Setup**, the Wireless Sniffer has no Bluetooth view (Bluetooth doesn't fit beside Wi-Fi on the classic ESP32), and it updates from `CYD_Suite.bin` in the same releases.
 
+**3.5" CYD (ESP32-3248S035C):** the same CYD build with its own pins (`tools/build.sh cyd35`, `tools/cyd35_flags.txt`): 480×320 ST7796 screen, GT911 capacitive touch, backlight on GPIO27. The apps' 320×170 screen is drawn 1.5× bigger so it fills the display, with a full-width status bar (clock, date, Wi-Fi) below it (in portrait, a column on the right); the Precision Clock is scaled to the full height. An app can also ask for the whole 480×320 in 16-bit colour (`setNative()`, drawn in 56-pixel strips through `frame()`), as Port Map does. It works the same way as the 2.8" CYD, except that it has no battery input (the badge always shows USB) and **BOOT** turns it back on after "Power off" (its touch interrupt pin can't wake the chip). It updates from `CYD35_Suite.bin`.
+
 ## Updates over Wi-Fi
 
 Devices update themselves from this repo's [releases](https://github.com/turkey415/t-display-progs/releases). At power-on and once a day each one reads `version.txt` from the latest release and, if it is newer than what it runs, downloads `TDisplay_Suite.bin`, installs it and restarts. You see a progress bar while it does. Settings and Wi-Fi are kept. **Check for update** in the menu does the same at any time. Turn the automatic check off on the setup page if you'd rather update by hand.
@@ -90,7 +94,7 @@ To publish a new version:
 
 1. Change `FW_VERSION` in `TDisplay_Suite/version.h` (e.g. `1.2.0`) and merge.
 2. Push the tag on main: `git tag v1.2.0 && git push origin v1.2.0`.
-3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `CYD_Suite.bin`, `CYD_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
+3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `CYD_Suite.bin`, `CYD_Suite-full.bin`, `CYD35_Suite.bin`, `CYD35_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
 
 Every pull request gets a build too, with the files attached to the run.
 
@@ -125,7 +129,7 @@ arduino-cli compile --upload -p /dev/ttyACM0 \
   TDisplay_Suite
 ```
 
-Or `tools/build.sh s3` / `tools/build.sh cyd` (add a port to flash, `-` to only build). The CYD build sets TFT_eSPI up from `tools/cyd_flags.txt`, so `User_Setup_Select.h` can stay on the T-Display setup.
+Or `tools/build.sh s3` / `tools/build.sh cyd` / `tools/build.sh cyd35` (add a port to flash, `-` to only build). The CYD build sets TFT_eSPI up from `tools/cyd_flags.txt`, so `User_Setup_Select.h` can stay on the T-Display setup.
 
 On Windows the port is a `COM` number. If upload won't start, hold BOOT, tap RST, let go of BOOT, and try again.
 

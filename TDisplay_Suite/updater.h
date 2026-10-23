@@ -12,7 +12,9 @@
 namespace updater {
 
 const char* RELEASES = "https://github.com/turkey415/t-display-progs/releases/latest/download/";
-#ifdef BOARD_CYD
+#if defined(BOARD_CYD35)
+const char* BIN_NAME = "CYD35_Suite.bin";      // the 3.5" CYD
+#elif defined(BOARD_CYD)
 const char* BIN_NAME = "CYD_Suite.bin";        // the CYD has its own build in each release
 #else
 const char* BIN_NAME = "TDisplay_Suite.bin";
