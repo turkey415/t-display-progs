@@ -82,6 +82,8 @@ In the **mDNS Browser** (portrait), tap the status column and it slides off to t
 
 Differences: the setup hotspot is **CYD-Setup**, the Wireless Sniffer has no Bluetooth view (Bluetooth doesn't fit beside Wi-Fi on the classic ESP32), and it updates from `CYD_Suite.bin` in the same releases.
 
+**3.5" CYD (ESP32-3248S035C):** the same CYD build with its own pins (`tools/build.sh cyd35`, `tools/cyd35_flags.txt`): 480×320 ST7796 screen, GT911 capacitive touch, backlight on GPIO27. It shows the 2.8" CYD's 320×240 layout centered on the screen and works the same way, except that it has no battery input (the badge always shows USB) and **BOOT** turns it back on after "Power off" (its touch interrupt pin can't wake the chip). It updates from `CYD35_Suite.bin`.
+
 ## Updates over Wi-Fi
 
 Devices update themselves from this repo's [releases](https://github.com/turkey415/t-display-progs/releases). At power-on and once a day each one reads `version.txt` from the latest release and, if it is newer than what it runs, downloads `TDisplay_Suite.bin`, installs it and restarts. You see a progress bar while it does. Settings and Wi-Fi are kept. **Check for update** in the menu does the same at any time. Turn the automatic check off on the setup page if you'd rather update by hand.
@@ -90,7 +92,7 @@ To publish a new version:
 
 1. Change `FW_VERSION` in `TDisplay_Suite/version.h` (e.g. `1.2.0`) and merge.
 2. Push the tag on main: `git tag v1.2.0 && git push origin v1.2.0`.
-3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `CYD_Suite.bin`, `CYD_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
+3. The **Build** workflow compiles it and makes the release (`TDisplay_Suite.bin`, `TDisplay_Suite-full.bin`, `CYD_Suite.bin`, `CYD_Suite-full.bin`, `CYD35_Suite.bin`, `CYD35_Suite-full.bin`, `version.txt`). It refuses if the tag and `version.h` differ.
 
 Every pull request gets a build too, with the files attached to the run.
 
@@ -125,7 +127,7 @@ arduino-cli compile --upload -p /dev/ttyACM0 \
   TDisplay_Suite
 ```
 
-Or `tools/build.sh s3` / `tools/build.sh cyd` (add a port to flash, `-` to only build). The CYD build sets TFT_eSPI up from `tools/cyd_flags.txt`, so `User_Setup_Select.h` can stay on the T-Display setup.
+Or `tools/build.sh s3` / `tools/build.sh cyd` / `tools/build.sh cyd35` (add a port to flash, `-` to only build). The CYD build sets TFT_eSPI up from `tools/cyd_flags.txt`, so `User_Setup_Select.h` can stay on the T-Display setup.
 
 On Windows the port is a `COM` number. If upload won't start, hold BOOT, tap RST, let go of BOOT, and try again.
 

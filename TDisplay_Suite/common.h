@@ -5,13 +5,26 @@
 #include <TFT_eSPI.h>
 #include <time.h>
 #include <Preferences.h>
+#include <Wire.h>
 
 // ---------- Board pins ----------
 // Two boards share this firmware. The default is the LilyGO T-Display-S3. Building with
 // -DBOARD_CYD (see tools/build.sh) makes it for the Freenove 2.8" "Cheap Yellow Display"
 // (FNK0103B: classic ESP32, 240x320 ST7789, resistive touch). The CYD has no second key, so
 // the apps keep their 320x170 screen and the 70 spare pixels become two touch keys.
-#ifdef BOARD_CYD
+#if defined(BOARD_CYD35)
+// -DBOARD_CYD35 (with BOARD_CYD) is the 3.5" ESP32-3248S035C: 480x320 ST7796, GT911
+// capacitive touch, no battery input. It runs the 2.8" CYD's 320x240 layout in the middle
+// of the screen (a TFT_eSPI viewport, see screenRotation()).
+#define BOARD_NAME   "CYD SUITE"
+#define PIN_LCD_BL   27   // backlight
+#define BTN_A        0    // BOOT key
+#define BTN_B        100  // no such pin: the touchscreen
+#define NO_BATTERY        // GPIO34 is a light sensor here
+#define HINT_SETUP   "Hold the screen for Wi-Fi setup"
+#define HINT_WAKE    "Press BOOT to turn on"
+const int LED_PINS[] = {4, 16, 17};   // RGB LED, active low
+#elif defined(BOARD_CYD)
 #define BOARD_NAME   "CYD SUITE"
 #define PIN_LCD_BL   21   // backlight
 #define PIN_BAT      34   // battery voltage (through 1/2 divider)
@@ -20,6 +33,7 @@
 #define PIN_TOUCH_IRQ 36  // low while the screen is touched (wakes it from power off)
 #define HINT_SETUP   "Hold the screen for Wi-Fi setup"
 #define HINT_WAKE    "Tap the screen to turn on"
+const int LED_PINS[] = {22, 16, 17};  // RGB LED, active low
 #else
 #define BOARD_NAME   "T-DISPLAY SUITE"
 #define PIN_POWER_ON 15   // LCD + battery power enable (must be HIGH on battery)
@@ -108,6 +122,18 @@ const int ROT_LANDSCAPE = 1;
 const int ROT_PORTRAIT  = 0;    // USB at the bottom (2 puts it at the top)
 bool portrait = false;
 
+// Turns the screen. On the 3.5" CYD it then clears the whole panel and narrows drawing to a
+// centered 320x240 (landscape) or 240x320 (portrait) window, so the 2.8" layout fits as is.
+void screenRotation(int r) {
+  tft.setRotation(r);                  // also resets the viewport
+#ifdef BOARD_CYD35
+  tft.fillScreen(C_BG);
+  bool land = tft.width() > tft.height();
+  int w = land ? 320 : 240, h = land ? 240 : 320;
+  tft.setViewport((tft.width() - w) / 2, (tft.height() - h) / 2, w, h, true);
+#endif
+}
+
 // ---------- Touch (CYD only) ----------
 // The XPT2046 touch chip has its own pins, read by bit-banging. The CYD's only readable button
 // is BOOT (the other one is RESET, wired to the chip), so the touchscreen stands in for the
@@ -115,6 +141,73 @@ bool portrait = false;
 // The 70 pixels the 320x170 apps don't use hold a status bar (status::, at the end).
 #ifdef BOARD_CYD
 namespace touch {
+bool down = false;           // a finger is on the screen
+int  x = 0, y = 0;           // where, in the screen's current rotation
+bool tapped = false;         // a short tap on the canvas just ended, at tapX, tapY
+int  tapX, tapY;
+uint32_t downAt = 0;
+
+void setDown(bool on) {
+  if (on == down) return;
+  down = on;
+  if (on) downAt = millis();
+  else if (millis() - downAt < 600) { tapped = true; tapX = x; tapY = y; }
+}
+
+#ifdef BOARD_CYD35
+// GT911 capacitive touch on I2C. Its X/Y already follow the landscape screen, but it reports
+// them as 0-320 and 0-480 (its portrait size), so each axis is scaled. From tapping the four
+// corners (2026-10-22): raw x 10..300 = screen x 15..465, raw y 20..460 = screen y 15..305.
+const int T_SDA = 33, T_SCL = 32, T_INT = 21, T_RST = 25;
+const uint8_t ADDR = 0x5D;
+const int VX = 80, VY = 40;            // where the 320x240 window starts on the 480x320 panel
+
+bool rd(uint16_t reg, uint8_t* b, int n) {
+  Wire.beginTransmission(ADDR); Wire.write(reg >> 8); Wire.write(reg & 0xFF);
+  if (Wire.endTransmission() != 0) return false;
+  if (Wire.requestFrom(ADDR, (uint8_t)n) != n) return false;
+  for (int i = 0; i < n; i++) b[i] = Wire.read();
+  return true;
+}
+
+void clearStatus() {
+  Wire.beginTransmission(ADDR); Wire.write(0x81); Wire.write(0x4E); Wire.write(0); Wire.endTransmission();
+}
+
+void begin() {
+  // INT held low through reset picks address 0x5D
+  pinMode(T_INT, OUTPUT); pinMode(T_RST, OUTPUT);
+  digitalWrite(T_INT, LOW); digitalWrite(T_RST, LOW); delay(20);
+  digitalWrite(T_RST, HIGH); delay(10);
+  pinMode(T_INT, INPUT); delay(60);
+  Wire.begin(T_SDA, T_SCL, 400000);
+}
+
+void update() {
+  static uint32_t last = 0, lastSeen = 0;
+  if (millis() - last < 8) return;
+  last = millis();
+  uint8_t st;
+  bool on = down;
+  if (rd(0x814E, &st, 1) && (st & 0x80)) {
+    on = (st & 0x0F) > 0;
+    if (on) {
+      uint8_t p[4];
+      if (rd(0x8150, p, 4)) {
+        int rx = p[0] | p[1] << 8, ry = p[2] | p[3] << 8;
+        int sx = map(rx, 10, 300, 15, 465), sy = map(ry, 20, 460, 15, 305);
+        int lx = constrain(sx - VX, 0, 319), ly = constrain(sy - VY, 0, 239);
+        if (portrait) { x = 239 - ly; y = lx; } else { x = lx; y = ly; }
+      }
+      lastSeen = millis();
+    }
+    clearStatus();
+  } else if (down && millis() - lastSeen > 250) {
+    on = false;                          // missed the release report
+  }
+  setDown(on);
+}
+#else
 const int T_CLK = 25, T_DIN = 32, T_DO = 39, T_CS = 33;
 // Raw readings at the screen edges in landscape, from tapping four corners (2026-10-19).
 // Screen x follows the raw Y channel, screen y the raw X channel.
@@ -122,11 +215,6 @@ const int RY_LEFT = 211, RY_RIGHT = 3716;   // raw Y at landscape x = 0 and x = 
 const int RX_TOP  = 307, RX_BOT   = 3948;   // raw X at landscape y = 0 and y = 240
 const int Z_ON = 150;                        // pressure that counts as a touch
 
-bool down = false;           // a finger is on the screen
-int  x = 0, y = 0;           // where, in the screen's current rotation
-bool tapped = false;         // a short tap on the canvas just ended, at tapX, tapY
-int  tapX, tapY;
-uint32_t downAt = 0;
 
 void clk() { digitalWrite(T_CLK, HIGH); digitalWrite(T_CLK, LOW); }
 
@@ -166,11 +254,10 @@ void update() {
       if (portrait) { x = 239 - ly; y = lx; } else { x = lx; y = ly; }
     }
   }
-  if (on == down) return;
-  down = on;
-  if (on) downAt = millis();
-  else if (millis() - downAt < 600) { tapped = true; tapX = x; tapY = y; }
+  setDown(on);
 }
+
+#endif
 
 // A finished short tap, where it was in the current rotation (= sprite coordinates).
 bool tap(int& px, int& py) {
@@ -282,7 +369,7 @@ void setPortrait(bool p) {
   if (p == portrait) return;
 #endif
   portrait = p;
-  tft.setRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
+  screenRotation(p ? ROT_PORTRAIT : ROT_LANDSCAPE);
   tft.fillScreen(C_BG);
   spr.deleteSprite();          // the same size either way, so the memory is reused at once
   spr.setColorDepth(SPR_DEPTH);
@@ -316,9 +403,13 @@ float slowV = 0;                   // about a one-minute average, to spot jumps 
 bool charging = false;             // check 3's answer
 
 float batteryVolts() {
+#ifdef NO_BATTERY
+  return 5.0f;                     // always "on USB"
+#else
   uint32_t mv = 0;
   for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(PIN_BAT);
   return mv / 8 * 2.0f / 1000.0f;
+#endif
 }
 
 void updateBattery() {

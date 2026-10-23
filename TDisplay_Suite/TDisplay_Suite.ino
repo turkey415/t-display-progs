@@ -319,7 +319,13 @@ void powerOff(const char* why) {
   // The touch chip pulls its IRQ pin low when touched; GPIO36 is input-only and has a
   // pull-up on the board, so it wakes the ESP32 straight from it.
   gpio_deep_sleep_hold_en();
+#ifdef PIN_TOUCH_IRQ
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_TOUCH_IRQ, 0);
+#else
+  // The 3.5" CYD's touch interrupt (GPIO21) can't wake the chip, so BOOT does.
+  rtc_gpio_pullup_en((gpio_num_t)BTN_A);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)BTN_A, 0);
+#endif
 #else
   pinMode(PIN_POWER_ON, OUTPUT); digitalWrite(PIN_POWER_ON, LOW);   // LCD power off
   gpio_hold_en((gpio_num_t)PIN_POWER_ON);
@@ -352,7 +358,9 @@ void checkBattery() {
 const int ROW_H = 21, ROWS_SHOWN = 7;
 const int ITEMS = NUM_APPS + 3;      // + "Check for update", "Wi-Fi & settings", "Power off"
 bool inMenu = false;
-#ifdef BOARD_CYD
+#if defined(BOARD_CYD35)
+#define BOARD_WAKE_BLURB "BOOT turns it on"
+#elif defined(BOARD_CYD)
 #define BOARD_WAKE_BLURB "A tap turns it on"
 #else
 #define BOARD_WAKE_BLURB "Top key turns it on"
@@ -423,8 +431,12 @@ void setup() {
   gpio_deep_sleep_hold_dis();
   bool woke = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
 #ifdef BOARD_CYD
+#ifdef PIN_TOUCH_IRQ
   if (woke) rtc_gpio_deinit((gpio_num_t)PIN_TOUCH_IRQ);
-  for (int p : {22, 16, 17}) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }   // RGB LED off
+#else
+  if (woke) rtc_gpio_deinit((gpio_num_t)BTN_A);
+#endif
+  for (int p : LED_PINS) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }   // RGB LED off
   pinMode(BTN_A, INPUT_PULLUP);
   touch::begin();
 #else
@@ -437,7 +449,7 @@ void setup() {
   Serial.begin(115200);
 
   tft.init();
-  tft.setRotation(ROT_LANDSCAPE);   // landscape, USB on the left; use 3 to flip
+  screenRotation(ROT_LANDSCAPE);   // landscape, USB on the left; use 3 to flip
   tft.fillScreen(C_BG);
   // Made before Wi-Fi starts, while memory is in one piece. setPortrait swaps it for one of
   // the same size.
