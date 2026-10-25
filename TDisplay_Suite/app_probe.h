@@ -41,6 +41,11 @@ struct Probe {
   double down, up;        // last speed test, bps (0 = none)
   uint32_t upSecs, seq;
   uint32_t heardUdp, heardHttp, seen, changedAt;   // millis(), 0 = never
+  // Jack survey (Probe Deck 0.25+): walking the hall, recording each seat's jack
+  bool svOn, svArmed;
+  char svNext[24], svLast[24];
+  int  svN;
+  char svLevel;           // last seat: 'g' good, 'c' check, 'b' bad, 0 none
 };
 Probe probes[MAX_PROBES];
 int numProbes = 0, cur = 0, page = 0;
@@ -136,6 +141,16 @@ void take(const char* body, size_t len, bool viaHttp, const char* httpIp) {
   p.up     = doc["speed"]["up"] | 0.0;
   p.upSecs = doc["up"] | 0;
   p.seq    = doc["seq"] | 0;
+  JsonObject sv = doc["sv"];
+  p.svOn = !sv.isNull();
+  if (p.svOn) {
+    p.svArmed = sv["armed"] | false;
+    strlcpy(p.svNext, sv["next"] | "", sizeof p.svNext);
+    p.svN = sv["n"] | 0;
+    strlcpy(p.svLast, sv["last"]["seat"] | "", sizeof p.svLast);
+    const char* lv = sv["last"]["level"] | "";
+    p.svLevel = !strcmp(lv, "good") ? 'g' : !strcmp(lv, "check") ? 'c' : !strcmp(lv, "bad") ? 'b' : 0;
+  }
 
   uint32_t now = millis();
   (viaHttp ? p.heardHttp : p.heardUdp) = now;
@@ -279,6 +294,37 @@ void row(int y, const char* label, int8_t ok, const String& value, uint16_t col 
   spr.drawString(fit(value, 220, 2), 314, y);
 }
 
+// Jack survey: the next seat to plug into, big while surveying, and how the last seat did.
+void surveyStrip(const Probe& p, int y) {
+  spr.drawFastHLine(8, y - 3, 304, C_HDR);
+  uint16_t lc = p.svLevel == 'g' ? C_GOOD : p.svLevel == 'c' ? C_WARN : p.svLevel == 'b' ? C_BAD : C_DIM;
+  const char* lw = p.svLevel == 'g' ? "good" : p.svLevel == 'c' ? "check" : p.svLevel == 'b' ? "bad" : "";
+  spr.setTextDatum(TL_DATUM);
+  if (p.svArmed) {
+    spr.setTextFont(1); spr.setTextColor(C_DIM, C_BG);
+    spr.drawString("NEXT SEAT", 8, y + 1);
+    spr.setTextFont(2); spr.setTextColor(C_AMBER, C_BG);
+    spr.drawString(fit(p.svNext[0] ? String(p.svNext) : String("-"), 110, 2), 66, y - 2);
+  } else {
+    spr.setTextFont(1); spr.setTextColor(C_DIM, C_BG);
+    spr.drawString("SURVEY PAUSED", 8, y + 1);
+  }
+  spr.setTextDatum(TR_DATUM);
+  spr.setTextFont(1);
+  String last = String(p.svN) + (p.svN == 1 ? " seat" : " seats");
+  spr.setTextColor(C_DIM, C_BG);
+  if (p.svLast[0]) {
+    String tail = String("  last ") + p.svLast + " ";
+    spr.setTextColor(lc, C_BG);
+    spr.drawString(lw, 312, y + 1);
+    int w = spr.textWidth(lw);
+    spr.setTextColor(C_DIM, C_BG);
+    spr.drawString(last + tail, 312 - w, y + 1);
+  } else {
+    spr.drawString(last, 312, y + 1);
+  }
+}
+
 void pagePort(const Probe& p) {
   bool live = p.seen && millis() - p.seen < STALE_MS;
   uint16_t big = live ? C_AMBER : C_DIM;
@@ -337,6 +383,7 @@ void pagePort(const Probe& p) {
   spr.setTextDatum(TC_DATUM);
   spr.setTextColor(C_DIM, C_BG);
   spr.drawString(p.ipt >= 0 ? "IP in " + String(p.ipt, 1) + " s" : String(p.ip), 170, y);
+  if (p.svOn) surveyStrip(p, 143);
 }
 
 void pageTests(const Probe& p) {
