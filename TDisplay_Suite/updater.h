@@ -6,7 +6,7 @@
 #pragma once
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <HTTPUpdate.h>
+#include <Update.h>
 #include "version.h"
 
 namespace updater {
@@ -60,6 +60,52 @@ String latest(String& problem) {
   return v;
 }
 
+// Downloads the release .bin and installs it. Returns why it failed (on success it restarts).
+// Done here rather than with httpUpdate: that checks the first byte (0xE9) the moment the
+// headers arrive, without waiting for the body, so over TLS from GitHub it often sees nothing
+// yet and fails with "Verify Bin Header Failed". This waits for the data first.
+String install(const String& v) {
+  screen("Updating to v" + v, "Don't unplug", "Downloading...", C_WARN);
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.setTimeout(15000);
+  if (!http.begin(client, String(RELEASES) + BIN_NAME)) return "Bad update address";
+  int code = http.GET();
+  if (code != 200) { http.end(); return code == 404 ? "No update file" : code < 0 ? "Can't reach GitHub" : "GitHub said HTTP " + String(code); }
+  int total = http.getSize();
+  if (total <= 0) { http.end(); return "GitHub sent no file size"; }
+
+  WiFiClient* in = http.getStreamPtr();
+  uint32_t t0 = millis();
+  while (!in->available() && in->connected() && millis() - t0 < 15000) delay(20);
+  if (in->peek() != 0xE9) { http.end(); return in->available() ? "Download is not firmware" : "Download never started"; }
+
+  if (!Update.begin(total, U_FLASH)) { http.end(); return Update.errorString(); }
+  Update.onProgress([v](size_t done, size_t all) {
+    static int lastPct = -1;
+    int pct = all > 0 ? done * 100 / all : 0;
+    if (pct == lastPct) return;
+    lastPct = pct;
+    screen("Updating to v" + v, "Don't unplug", String(pct) + "%", C_WARN);
+    spr.drawRect(40, 136, 240, 12, C_DIM);
+    spr.fillRect(42, 138, 236 * pct / 100, 8, C_WARN);
+    show();
+  });
+  size_t wrote = Update.writeStream(*in);
+  http.end();
+  if (wrote != (size_t)total || !Update.end(true)) {
+    String why = Update.hasError() ? String(Update.errorString()) : "Download cut off";
+    Update.abort();
+    return why;
+  }
+  screen("Updated to v" + v, "Restarting...", "", C_GOOD);
+  delay(1000);
+  ESP.restart();
+  return "";
+}
+
 // Checks, and installs if there is something newer. `shown` puts up a result even when there is
 // nothing to do (from the menu); a daily check stays quiet unless it is installing.
 void check(bool shown) {
@@ -73,24 +119,8 @@ void check(bool shown) {
   if (!v.length()) { if (shown) { screen("Can't check", problem, "", C_BAD); delay(3000); } return; }
   if (!newer(v, FW_VERSION)) { if (shown) { screen("Up to date", "v" FW_VERSION " is the newest", "", C_GOOD); delay(2500); } return; }
 
-  screen("Updating to v" + v, "Don't unplug", "Downloading...", C_WARN);
-  httpUpdate.onProgress([v](int done, int total) {
-    static int lastPct = -1;
-    int pct = total > 0 ? done * 100 / total : 0;
-    if (pct == lastPct) return;
-    lastPct = pct;
-    screen("Updating to v" + v, "Don't unplug", String(pct) + "%", C_WARN);
-    spr.drawRect(40, 136, 240, 12, C_DIM);
-    spr.fillRect(42, 138, 236 * pct / 100, 8, C_WARN);
-    show();
-  });
-  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  httpUpdate.rebootOnUpdate(true);
-  WiFiClientSecure client;
-  client.setInsecure();
-  t_httpUpdate_return r = httpUpdate.update(client, String(RELEASES) + BIN_NAME);
+  String why = install(v);
   // Only comes back if it failed; on success the device has restarted into the new version.
-  String why = r == HTTP_UPDATE_NO_UPDATES ? "No update file" : httpUpdate.getLastErrorString();
   Serial.printf("update failed: %s\n", why.c_str());
   screen("Update failed", why, "Still running v" FW_VERSION, C_BAD);
   delay(4000);
